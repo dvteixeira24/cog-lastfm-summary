@@ -150,16 +150,18 @@ def draw_genre_chart(
     else:
         xs = [left + width * index / (count - 1) for index in range(count)]
 
-    totals = [sum(item[index] for item in values) for index in range(count)]
-    max_total = max(totals, default=0.0)
+    steps = max(2, int(width / 2))
+    sample_xs = [left + width * index / (steps - 1) for index in range(steps)]
+    interpolated = [[_value_at(item, xs, x) for x in sample_xs] for item in values]
+    max_total = max(
+        (sum(item[index] for item in interpolated) for index in range(steps)),
+        default=0.0,
+    )
     if max_total <= 0:
         return
 
     scale = max(0.0, height - 16) / max_total
     center = top + height / 2
-    steps = max(2, int(width / 2))
-    sample_xs = [left + width * index / (steps - 1) for index in range(steps)]
-    interpolated = [[_value_at(item, xs, x) for x in sample_xs] for item in values]
 
     supersample = 3
     band_layer = Image.new(
