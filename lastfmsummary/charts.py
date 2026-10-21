@@ -200,7 +200,7 @@ def draw_genre_chart(
 
         if best is None or best[3] < _metric(label_font) + 4:
             continue
-        text = series[series_index].name
+        text = _fit_text(draw, series[series_index].name, label_font, int(width * 0.5))
         box = draw.textbbox((0, 0), text, font=label_font)
         text_width = box[2] - box[0]
         text_height = box[3] - box[1]

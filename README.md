@@ -336,7 +336,7 @@ pip install "Red-DiscordBot @ git+https://github.com/Cog-Creators/Red-DiscordBot
 pytest -q
 ```
 
-Current expected result: 123 tests pass with Red installed, or 81 pass and 1
+Current expected result: 124 tests pass with Red installed, or 81 pass and 1
 skipped without it.
 
 ### Manual smoke test
