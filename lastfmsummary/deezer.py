@@ -19,7 +19,7 @@ log = logging.getLogger("red.lastfmsummary.deezer")
 
 SEARCH_URL = "https://api.deezer.com/search/artist"
 ALBUM_SEARCH_URL = "https://api.deezer.com/search/album"
-USER_AGENT = "lastfm-summary-cog/1.2 (image lookup)"
+USER_AGENT = "lastfm-summary-cog/1.3 (image lookup)"
 CACHE_TTL = 30 * 24 * 60 * 60
 MISS_CACHE_TTL = 7 * 24 * 60 * 60
 MATCH_THRESHOLD = 0.88

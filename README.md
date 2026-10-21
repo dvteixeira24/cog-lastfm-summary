@@ -13,12 +13,17 @@ that member's own image with covers and names.
 
 - **A chart for every member** - each linked Last.fm account gets its own grid,
   posted separately with that member's name and profile.
+- **Genres and listening clock** - every image also shows the member's top
+  tags as a streamgraph across the period, plus a 24-hour radial clock with
+  their busiest hour.
 - **Artists or albums** - album tiles show the album and artist name.
 - **Artist and album art** - when Last.fm returns placeholder art, the cog
   searches Google Images through SerpApi, then falls back to Deezer, then to a
   generated initials tile.
 
   ![Example artist grid](docs/sample-artists.png)
+
+  ![Example genre timeline and listening clock](docs/sample-insights.png)
 
 - **Configurable cadence** — weekly, monthly, quarterly, half-yearly or yearly.
   The cadence is also the chart window (`weekly` uses Last.fm's 7-day chart).
@@ -236,6 +241,30 @@ members still get their charts. The failed member is recorded for
 `lastfmset status` and reported by `lastfmset preview`. If nobody can be fetched,
 no images are posted and the failure is recorded.
 
+## Genres and listening clock
+
+Below the grid, each image adds two views built from the member's scrobbles in
+the same period:
+
+- **TOP TAGS** — a streamgraph of the member's most-listened Last.fm tags across
+  six equal time slices (seven daily slices for weekly summaries). Tags come from
+  each artist's top tags, weighted by how often that artist was played.
+- **LISTENING CLOCK** — a 24-hour radial chart in the server's configured
+  timezone. The busiest hour is highlighted and its estimated scrobble count is
+  shown next to the dial.
+
+For accuracy without unbounded API use, the cog samples up to 1,000 scrobbles
+evenly across the period and scales the counts back to Last.fm's reported total.
+If the period contains more scrobbles than that, the clock notes the sample size
+under its stats.
+
+Insights are best-effort. A profile with no recent scrobbles or no usable tags
+still gets its normal grid; only the missing chart is omitted. If neither chart
+can be built, the image looks exactly like the grid-only versions above.
+
+Artist tags are cached on disk for 30 days (7 days for artists with no tags), so
+repeat runs usually cost no extra tag requests.
+
 ## Data and privacy
 
 Per server, the cog stores:
@@ -247,6 +276,11 @@ Per server, the cog stores:
 No scrobbling or Last.fm authentication is performed, and the API key is only
 used for public read endpoints. The Last.fm and SerpApi keys are stored globally
 and are never shown in full.
+
+To build the genre timeline and listening clock, the cog reads recent scrobbles
+and artist tags from Last.fm. Scrobble timestamps are processed in memory only
+and are never written to disk. The artist-tag cache stores artist names and
+their public Last.fm tags, not Discord IDs or Last.fm usernames.
 
 When an artist or album has no usable Last.fm image, its **name** is sent to
 SerpApi/Google Images, then to Deezer's public search API. No Discord user data,
@@ -275,7 +309,9 @@ data; use Red's data deletion commands first if needed.
 | One member's chart is missing | That profile may be private, renamed, or temporarily unavailable. Check `[p]lastfmset status` for the recorded failure. |
 | Images have letter tiles instead of covers | Last.fm returned placeholder art, SerpApi had no usable result, and Deezer had no confident match. This is normal for obscure artists. |
 | Artist portraits are missing | SerpApi/Deezer returned no confident match, or the lookup failed; the cog falls back to a generated tile. |
-| Times look wrong | Set the server's timezone with `[p]lastfmset timezone`; the schedule uses local wall-clock time. |
+| The genre or clock section is missing | The profile has no recent scrobbles in the period, has no usable artist tags, or Last.fm was unavailable. The grid still posts; try `[p]lastfmset preview @member` later. |
+| The clock says "Estimated from ..." | The period contains more than 1,000 scrobbles. Counts are scaled from an even sample across the window to keep API use bounded. |
+| Times look wrong | Set the server's timezone with `[p]lastfmset timezone`; the schedule and listening clock use local wall-clock time. |
 
 ## Development
 
@@ -300,7 +336,7 @@ pip install "Red-DiscordBot @ git+https://github.com/Cog-Creators/Red-DiscordBot
 pytest -q
 ```
 
-Current expected result: 101 tests pass with Red installed, or 63 pass and 1
+Current expected result: 123 tests pass with Red installed, or 81 pass and 1
 skipped without it.
 
 ### Manual smoke test

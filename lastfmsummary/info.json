@@ -4,7 +4,7 @@
     ],
     "name": "LastFMSummary",
     "short": "Periodic server-wide Last.fm top artists or albums grids",
-    "description": "Members link their Last.fm usernames. The cog periodically builds a top artists or albums grid image for every linked member from their listening and posts it to a configured channel. Missing artwork is filled through SerpApi Google Images, then Deezer. Admins choose the channel, cadence, grid size, source and timezone.",
+    "description": "Members link their Last.fm usernames. The cog periodically builds a top artists or albums grid image for every linked member from their listening and posts it to a configured channel. Each image also includes a top-tags genre timeline and a 24-hour listening clock. Missing artwork is filled through SerpApi Google Images, then Deezer. Admins choose the channel, cadence, grid size, source and timezone.",
     "requirements": [
         "Pillow>=10.1",
         "tzdata"

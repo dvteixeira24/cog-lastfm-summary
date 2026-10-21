@@ -1,6 +1,6 @@
 # Listening Insights Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add a TOP TAGS streamgraph and a LISTENING CLOCK to every rendered Last.fm summary image.
 
@@ -32,7 +32,7 @@
 - Modify: `lastfmsummary/schedule.py:24-47`
 - Test: `tests/test_schedule.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_period_days_match_windows():
@@ -47,12 +47,12 @@ def test_period_days_match_windows():
     }
 ```
 
-- [ ] **Step 2: Run it and confirm failure**
+- [x] **Step 2: Run it and confirm failure**
 
 Run: `pytest tests/test_schedule.py::test_period_days_match_windows -q`
 Expected: ImportError for `PERIOD_DAYS`.
 
-- [ ] **Step 3: Add the constant and export it**
+- [x] **Step 3: Add the constant and export it**
 
 ```python
 #: Days covered by each Last.fm chart period, used for scrobble windows.
@@ -67,12 +67,12 @@ PERIOD_DAYS: dict[str, int] = {
 
 Add `"PERIOD_DAYS"` to `__all__`.
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `pytest tests/test_schedule.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lastfmsummary/schedule.py tests/test_schedule.py
@@ -87,7 +87,7 @@ git commit -m "feat: map chart periods to day windows"
 - Modify: `lastfmsummary/lastfm.py`
 - Test: `tests/test_lastfm.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add payload helpers and tests:
 
@@ -218,12 +218,12 @@ async def test_artist_top_tags_parses_and_limits(monkeypatch):
 
 Import `datetime, timezone` and `Scrobble` if needed.
 
-- [ ] **Step 2: Run the tests and confirm failure**
+- [x] **Step 2: Run the tests and confirm failure**
 
 Run: `pytest tests/test_lastfm.py -q`
 Expected: FAIL with missing `Scrobble` / methods.
 
-- [ ] **Step 3: Implement the client additions**
+- [x] **Step 3: Implement the client additions**
 
 Add imports and the dataclass:
 
@@ -371,12 +371,12 @@ Add the method:
         return tuple(tags)
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `pytest tests/test_lastfm.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lastfmsummary/lastfm.py tests/test_lastfm.py
@@ -391,7 +391,7 @@ git commit -m "feat: fetch sampled scrobbles and artist tags"
 - Create: `lastfmsummary/tags.py`
 - Test: `tests/test_tags.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```python
 import time
@@ -475,12 +475,12 @@ async def test_resolve_artist_tags_ignores_corrupt_cache(tmp_path):
     assert result["radiohead"] == (("art rock", 100),)
 ```
 
-- [ ] **Step 2: Run the tests and confirm failure**
+- [x] **Step 2: Run the tests and confirm failure**
 
 Run: `pytest tests/test_tags.py -q`
 Expected: ModuleNotFoundError.
 
-- [ ] **Step 3: Implement `tags.py`**
+- [x] **Step 3: Implement `tags.py`**
 
 Create a module with:
 
@@ -597,12 +597,12 @@ async def resolve_artist_tags(names, *, client, cache_path=None, limit=3, concur
     return results
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `pytest tests/test_tags.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lastfmsummary/tags.py tests/test_tags.py
@@ -617,7 +617,7 @@ git commit -m "feat: cache Last.fm artist tag lookups"
 - Create: `lastfmsummary/listening.py`
 - Test: `tests/test_listening.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```python
 from datetime import datetime, timedelta, timezone
@@ -710,12 +710,12 @@ def test_genre_timeline_returns_none_without_tags():
     )
 ```
 
-- [ ] **Step 2: Run the tests and confirm failure**
+- [x] **Step 2: Run the tests and confirm failure**
 
 Run: `pytest tests/test_listening.py -q`
 Expected: ModuleNotFoundError.
 
-- [ ] **Step 3: Implement `listening.py`**
+- [x] **Step 3: Implement `listening.py`**
 
 Include:
 
@@ -828,12 +828,12 @@ def build_genre_timeline(scrobbles, tags_by_artist, *, start, end, tz_name, buck
     )
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `pytest tests/test_listening.py -q`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lastfmsummary/listening.py tests/test_listening.py
@@ -849,7 +849,7 @@ git commit -m "feat: derive listening clock and genre timeline"
 - Modify: `lastfmsummary/render.py`
 - Test: `tests/test_render.py`
 
-- [ ] **Step 1: Write failing render tests**
+- [x] **Step 1: Write failing render tests**
 
 Add sample helpers and tests:
 
@@ -922,12 +922,12 @@ def test_render_extras_handle_a_single_tag_and_sampled_note():
 
 Update the `render()` helper signature to forward `genres` and `clock`.
 
-- [ ] **Step 2: Run the tests and confirm failure**
+- [x] **Step 2: Run the tests and confirm failure**
 
 Run: `pytest tests/test_render.py -q`
 Expected: TypeError for unexpected keyword arguments.
 
-- [ ] **Step 3: Create `charts.py` and wire `render.py`**
+- [x] **Step 3: Create `charts.py` and wire `render.py`**
 
 `charts.py` responsibilities:
 
@@ -975,7 +975,7 @@ note_font = load_font(max(10, min(14, int(width * 0.012))))
 Use `_draw_centered`-style centering for band and tick labels. Bump the
 user-agent in `render.py` to 1.3.
 
-- [ ] **Step 4: Run the render tests and inspect an image**
+- [x] **Step 4: Run the render tests and inspect an image**
 
 Run: `pytest tests/test_render.py -q`
 Expected: PASS.
@@ -983,7 +983,7 @@ Expected: PASS.
 Also render a local sample to `C:\Users\daniel\AppData\Local\Temp\opencode\insights-preview.png`
 and open it in an image viewer to confirm the static layout.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lastfmsummary/charts.py lastfmsummary/render.py tests/test_render.py
@@ -998,7 +998,7 @@ git commit -m "feat: draw genre timeline and listening clock"
 - Modify: `lastfmsummary/cog.py`
 - Test: `tests/test_cog.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add one success test and one failure test:
 
@@ -1095,12 +1095,12 @@ async def test_post_charts_survives_insight_failure(cog, monkeypatch, tmp_path):
 
 Import `Scrobble` at the top.
 
-- [ ] **Step 2: Run the tests and confirm failure**
+- [x] **Step 2: Run the tests and confirm failure**
 
 Run: `pytest tests/test_cog.py::test_post_charts_passes_insights_to_renderer -q`
 Expected: FAIL because `genres`/`clock` are not passed.
 
-- [ ] **Step 3: Implement insights collection**
+- [x] **Step 3: Implement insights collection**
 
 - import `PERIOD_DAYS`, `GenreTimeline`, `ListeningClock`,
   `build_genre_timeline`, `build_listening_clock`, `resolve_artist_tags`,
@@ -1190,12 +1190,12 @@ return insights
   `render_grid`;
 - in the posting loop, unpack `insights.get(username, (None, None))`.
 
-- [ ] **Step 4: Run the cog tests**
+- [x] **Step 4: Run the cog tests**
 
 Run: `pytest tests/test_cog.py -q`
 Expected: PASS (existing fakes simply return no scrobbles).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lastfmsummary/cog.py tests/test_cog.py
@@ -1211,12 +1211,12 @@ git commit -m "feat: attach listening insights to member charts"
 - Modify: `lastfmsummary/cog.py`, `lastfmsummary/lastfm.py`, `lastfmsummary/render.py`, `lastfmsummary/serp.py`, `lastfmsummary/deezer.py`
 - Create: `docs/sample-insights.png`
 
-- [ ] **Step 1: Update versions and user agents**
+- [x] **Step 1: Update versions and user agents**
 
 Set `1.3.0` in `pyproject.toml`, `LastFMSummary.__version__`, and every
 `lastfm-summary-cog/1.2` user-agent string.
 
-- [ ] **Step 2: Update the README**
+- [x] **Step 2: Update the README**
 
 - Add feature bullets for the genre streamgraph and listening clock.
 - Add `![Example insights](docs/sample-insights.png)` and a
@@ -1227,17 +1227,17 @@ Set `1.3.0` in `pyproject.toml`, `LastFMSummary.__version__`, and every
 - Add troubleshooting entries for missing insights.
 - Update the test count if it changes.
 
-- [ ] **Step 3: Update `info.json` descriptions**
+- [x] **Step 3: Update `info.json` descriptions**
 
 Mention the genre timeline and listening clock.
 
-- [ ] **Step 4: Generate the sample image**
+- [x] **Step 4: Generate the sample image**
 
 Use a temporary Python script (not committed) that calls `render_grid` with
 nine generated tiles and representative `GenreTimeline`/`ListeningClock`
 objects. Save it as `docs/sample-insights.png`.
 
-- [ ] **Step 5: Run the full verification**
+- [x] **Step 5: Run the full verification**
 
 Run:
 
@@ -1249,7 +1249,7 @@ ruff format --check .
 
 Expected: all tests pass, ruff clean.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add README.md pyproject.toml info.json lastfmsummary docs/sample-insights.png
@@ -1260,11 +1260,11 @@ git commit -m "docs: document listening insights and bump version"
 
 ## Self-Review Checklist
 
-- [ ] Every spec section maps to a task: period days (1), scrobbles/tags (2),
+- [x] Every spec section maps to a task: period days (1), scrobbles/tags (2),
       tag cache (3), analytics (4), rendering (5), cog (6), docs/version (7).
-- [ ] No TBD/TODO placeholders.
-- [ ] `ListeningClock`, `GenreTimeline`, `TagSeries`, `Scrobble`, and all
+- [x] No TBD/TODO placeholders.
+- [x] `ListeningClock`, `GenreTimeline`, `TagSeries`, `Scrobble`, and all
       function signatures match across tasks.
-- [ ] Sampling weights, timezone conversion, noise filtering, top-seven
+- [x] Sampling weights, timezone conversion, noise filtering, top-seven
       selection, and graceful degradation are covered by tests.
-- [ ] Existing rendering without extras keeps its dimensions.
+- [x] Existing rendering without extras keeps its dimensions.

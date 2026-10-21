@@ -138,7 +138,7 @@ class LastFMSummary(commands.Cog):
     """Periodic Last.fm top artists or albums charts for every linked member."""
 
     __author__ = "OpenCode"
-    __version__ = "1.2.0"
+    __version__ = "1.3.0"
 
     def __init__(self, bot: Red) -> None:
         self.bot = bot

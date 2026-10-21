@@ -15,7 +15,7 @@ from .cache import load_url_cache, save_url_cache
 log = logging.getLogger("red.lastfmsummary.serp")
 
 SEARCH_URL = "https://serpapi.com/search.json"
-USER_AGENT = "lastfm-summary-cog/1.2 (SerpApi image lookup)"
+USER_AGENT = "lastfm-summary-cog/1.3 (SerpApi image lookup)"
 CACHE_TTL = 30 * 24 * 60 * 60
 MISS_CACHE_TTL = 7 * 24 * 60 * 60
 MATCH_MIN_DIMENSION = 300
