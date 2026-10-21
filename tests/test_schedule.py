@@ -16,6 +16,18 @@ def utc(*args) -> datetime:
     return datetime(*args, tzinfo=timezone.utc)
 
 
+def test_period_days_match_windows():
+    from lastfmsummary.schedule import PERIOD_DAYS
+
+    assert PERIOD_DAYS == {
+        "weekly": 7,
+        "monthly": 30,
+        "quarterly": 90,
+        "half-yearly": 180,
+        "yearly": 365,
+    }
+
+
 def test_period_aliases_and_normalization():
     assert normalize_period("Weekly ") == "weekly"
     assert normalize_period("week") == "weekly"

@@ -12,6 +12,7 @@ __all__ = [
     "PERIOD_LABELS",
     "PERIOD_WINDOWS",
     "PERIOD_ALIASES",
+    "PERIOD_DAYS",
     "ANCHOR_MONTHS",
     "normalize_period",
     "parse_hhmm",
@@ -44,6 +45,15 @@ PERIOD_WINDOWS: dict[str, str] = {
     "quarterly": "the last 3 months",
     "half-yearly": "the last 6 months",
     "yearly": "the last 12 months",
+}
+
+#: Days covered by each Last.fm chart period, used for scrobble windows.
+PERIOD_DAYS: dict[str, int] = {
+    "weekly": 7,
+    "monthly": 30,
+    "quarterly": 90,
+    "half-yearly": 180,
+    "yearly": 365,
 }
 
 PERIOD_ALIASES: dict[str, str] = {
