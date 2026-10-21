@@ -43,10 +43,23 @@ def render(tiles, grid_size, **kwargs):
     return data
 
 
+def test_render_caption_height_adapts_to_text():
+    short = render([Tile("A", None, None, index + 1) for index in range(4)], 2)
+    long = render(
+        [Tile("A very long artist name that wraps", None, None, index + 1) for index in range(4)],
+        2,
+    )
+    with Image.open(io.BytesIO(short)) as image:
+        short_height = image.size[1]
+    with Image.open(io.BytesIO(long)) as image:
+        long_height = image.size[1]
+    assert long_height > short_height
+
+
 def test_render_2x2_dimensions():
     data = render(sample_tiles(4), 2)
     with Image.open(io.BytesIO(data)) as image:
-        assert image.size == (665, 935)
+        assert image.size == (665, 939)
         assert image.mode == "RGB"
 
 
@@ -54,7 +67,7 @@ def test_render_3x3_dimensions_and_cover():
     covers = {"https://img/1.jpg": png_bytes()}
     data = render(sample_tiles(9), 3, covers=covers)
     with Image.open(io.BytesIO(data)) as image:
-        assert image.size == (980, 1316)
+        assert image.size == (980, 1322)
 
 
 def test_render_handles_missing_covers_and_long_names():
@@ -64,13 +77,13 @@ def test_render_handles_missing_covers_and_long_names():
     ]
     data = render(tiles, 3)
     with Image.open(io.BytesIO(data)) as image:
-        assert image.size[0] == 980
+        assert image.size == (980, 1322)
 
 
 def test_render_truncates_extra_tiles_and_fills_empty_slots():
     data = render(sample_tiles(12), 3)
     with Image.open(io.BytesIO(data)) as image:
-        assert image.size == (980, 1316)
+        assert image.size == (980, 1322)
     # No exception when there are fewer tiles than slots.
     small = render(sample_tiles(2), 2)
     assert small.startswith(b"\x89PNG")
@@ -84,7 +97,7 @@ def test_render_clamps_grid_size():
     data = render(sample_tiles(4), 99)
     with Image.open(io.BytesIO(data)) as image:
         # Clamped to 8 -> 170 px covers.
-        assert image.size == (1452, 1928)
+        assert image.size == (1452, 1952)
 
 
 class FakeContent:

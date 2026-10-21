@@ -231,6 +231,25 @@ def _metric(font: ImageFont.ImageFont) -> int:
     return ascent + descent
 
 
+def _draw_centered(
+    draw: ImageDraw.ImageDraw,
+    center: tuple[float, float],
+    text: str,
+    font: ImageFont.ImageFont,
+    fill: tuple[int, int, int, int],
+) -> None:
+    box = draw.textbbox((0, 0), text, font=font)
+    draw.text(
+        (
+            center[0] - (box[2] - box[0]) / 2 - box[0],
+            center[1] - (box[3] - box[1]) / 2 - box[1],
+        ),
+        text,
+        font=font,
+        fill=fill,
+    )
+
+
 def render_grid(
     *,
     tiles: Sequence[Tile],
@@ -242,12 +261,12 @@ def render_grid(
 ) -> bytes:
     """Render a square grid of entries and return PNG bytes.
 
-    Missing covers and empty slots render as styled placeholders, so the output
-    dimensions are stable regardless of data availability.
+    Missing covers and empty slots render as styled placeholders, so the layout
+    stays consistent regardless of cover availability. Caption strips are sized
+    to the text they hold.
     """
     size = max(MIN_GRID, min(MAX_GRID, int(grid_size)))
     cover = 300 if size <= 4 else 220 if size <= 6 else 170
-    caption_h = max(44, int(cover * 0.22))
     gap = max(8, cover // 20)
     pad = max(18, cover // 12)
     header_h = max(78, int(cover * 0.27))
@@ -255,10 +274,6 @@ def render_grid(
     radius = max(8, cover // 18)
 
     width = pad * 2 + size * cover + (size - 1) * gap
-    height = pad + header_h + gap + size * (cover + caption_h) + (size - 1) * gap + footer_h + pad
-
-    canvas = Image.new("RGBA", (width, height), BACKGROUND)
-    draw = ImageDraw.Draw(canvas)
 
     title_font = load_font(max(24, int(cover * 0.12)), bold=True)
     subtitle_font = load_font(max(15, int(cover * 0.06)))
@@ -266,6 +281,38 @@ def render_grid(
     sub_font = load_font(max(12, int(cover * 0.052)))
     footer_font = load_font(max(12, int(cover * 0.048)))
     empty_font = load_font(max(13, int(cover * 0.058)), bold=True)
+
+    visible = list(tiles)[: size * size]
+    inner_width = cover - 20
+    name_line_h = _metric(name_font) + 1
+    sub_line_h = _metric(sub_font) + 1
+    caption_pad = max(6, int(cover * 0.04))
+
+    measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    layouts: list[tuple[list[str], int]] = []
+    for index in range(size * size):
+        tile = visible[index] if index < len(visible) else None
+        if tile is None:
+            layouts.append(([], 0))
+            continue
+        name_lines = _wrap_text(
+            measure,
+            tile.name,
+            name_font,
+            inner_width,
+            max_lines=1 if tile.subtitle else 2,
+        )
+        content_h = len(name_lines) * name_line_h
+        if tile.subtitle:
+            content_h += sub_line_h
+        layouts.append((name_lines, content_h))
+
+    caption_h = max((content_h for _, content_h in layouts), default=0) + caption_pad * 2
+    tile_h = cover + caption_h
+    height = pad + header_h + gap + size * tile_h + (size - 1) * gap + footer_h + pad
+
+    canvas = Image.new("RGBA", (width, height), BACKGROUND)
+    draw = ImageDraw.Draw(canvas)
 
     draw.text(
         (pad, pad), _ellipsize(draw, title, title_font, width - pad * 2), font=title_font, fill=TEXT
@@ -279,13 +326,11 @@ def render_grid(
     accent_y = pad + header_h - 8
     draw.rectangle((pad, accent_y, pad + min(width - pad * 2, 84), accent_y + 3), fill=ACCENT)
 
-    visible = list(tiles)[: size * size]
     for index in range(size * size):
         row, column = divmod(index, size)
         tile = visible[index] if index < len(visible) else None
         x = pad + column * (cover + gap)
-        y = pad + header_h + gap + row * (cover + caption_h + gap)
-        tile_h = cover + caption_h
+        y = pad + header_h + gap + row * (tile_h + gap)
 
         draw.rounded_rectangle(
             (x, y, x + cover, y + tile_h),
@@ -294,16 +339,12 @@ def render_grid(
         )
 
         if tile is None:
-            label = "Not enough data"
-            box = draw.textbbox((0, 0), label, font=empty_font)
-            draw.text(
-                (
-                    x + (cover - (box[2] - box[0])) / 2,
-                    y + (cover - (box[3] - box[1])) / 2 - box[1],
-                ),
-                label,
-                font=empty_font,
-                fill=EMPTY_TEXT,
+            _draw_centered(
+                draw,
+                (x + cover / 2, y + cover / 2),
+                "Not enough data",
+                empty_font,
+                EMPTY_TEXT,
             )
             continue
 
@@ -324,21 +365,27 @@ def render_grid(
             fill=SURFACE_LIGHT,
         )
         draw.rectangle((x, caption_top, x + cover, caption_top + radius), fill=SURFACE_LIGHT)
-        inner_width = cover - 20
-        text_y = caption_top + 7
 
-        name_lines = _wrap_text(
-            draw, tile.name, name_font, inner_width, max_lines=1 if tile.subtitle else 2
-        )
-        for line in name_lines:
-            draw.text((x + 10, text_y), line, font=name_font, fill=TEXT)
-            text_y += _metric(name_font) + 1
+        name_lines, content_h = layouts[index]
+        content_top = caption_top + (caption_h - content_h) / 2
+        for line_index, line in enumerate(name_lines):
+            _draw_centered(
+                draw,
+                (x + cover / 2, content_top + name_line_h * (line_index + 0.5)),
+                line,
+                name_font,
+                TEXT,
+            )
         if tile.subtitle:
-            draw.text(
-                (x + 10, min(text_y, y + tile_h - _metric(sub_font) - 4)),
+            _draw_centered(
+                draw,
+                (
+                    x + cover / 2,
+                    content_top + len(name_lines) * name_line_h + sub_line_h / 2,
+                ),
                 _ellipsize(draw, tile.subtitle, sub_font, inner_width),
-                font=sub_font,
-                fill=MUTED,
+                sub_font,
+                MUTED,
             )
 
     footer_y = height - pad - footer_h
