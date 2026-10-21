@@ -250,7 +250,6 @@ def render_grid(
     name_font = load_font(max(14, int(cover * 0.068)), bold=True)
     sub_font = load_font(max(12, int(cover * 0.052)))
     footer_font = load_font(max(12, int(cover * 0.048)))
-    rank_font = load_font(max(13, int(cover * 0.058)), bold=True)
     empty_font = load_font(max(13, int(cover * 0.058)), bold=True)
 
     draw.text(
@@ -301,26 +300,6 @@ def render_grid(
 
         mask = _rounded_mask((cover, cover), radius, bottom=False)
         canvas.paste(image.convert("RGBA"), (x, y), mask)
-
-        # Rank badge.
-        badge_w = max(28, int(cover * 0.13)) + (10 if tile.rank >= 10 else 0)
-        badge_h = max(24, int(cover * 0.11))
-        draw.rounded_rectangle(
-            (x + 6, y + 6, x + 6 + badge_w, y + 6 + badge_h),
-            radius=max(5, badge_h // 3),
-            fill=(0, 0, 0, 175),
-        )
-        rank_text = str(tile.rank)
-        rank_box = draw.textbbox((0, 0), rank_text, font=rank_font)
-        draw.text(
-            (
-                x + 6 + (badge_w - (rank_box[2] - rank_box[0])) / 2,
-                y + 6 + (badge_h - _metric(rank_font)) / 2,
-            ),
-            rank_text,
-            font=rank_font,
-            fill=TEXT,
-        )
 
         # Caption bar.
         caption_top = y + cover

@@ -5,7 +5,7 @@ Turn a Discord server's Last.fm listeners into clean, automatically posted
 
 Members link their Last.fm usernames once. At the cadence you choose, the bot
 fetches each linked member's top chart for the matching time window and posts
-that member's own image with covers, names and ranks.
+that member's own image with covers and names.
 
 ![Example weekly album grid](docs/sample-albums.png)
 
