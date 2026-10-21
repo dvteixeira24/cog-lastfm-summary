@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Sequence
 
 import aiohttp
@@ -47,6 +49,16 @@ class MemberChart:
     entries: tuple[Entry, ...] = field(default_factory=tuple)
 
 
+@dataclass(frozen=True)
+class Scrobble:
+    """One scrobble from a member's recent listening history."""
+
+    artist: str
+    track: str
+    played_at: datetime
+    weight: float = 1.0
+
+
 class LastFMError(Exception):
     """A permanent Last.fm API error."""
 
@@ -71,6 +83,28 @@ def _as_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _parse_scrobble(row: Any) -> Scrobble | None:
+    if not isinstance(row, Mapping):
+        return None
+    raw_artist = row.get("artist")
+    if isinstance(raw_artist, Mapping):
+        artist = _as_text(raw_artist.get("#text") or raw_artist.get("name"))
+    else:
+        artist = _as_text(raw_artist)
+    track = _as_text(row.get("name"))
+    date = row.get("date")
+    if not isinstance(date, Mapping):
+        return None
+    timestamp = _as_int(date.get("uts"), -1)
+    if not artist or not track or timestamp < 0:
+        return None
+    return Scrobble(
+        artist=artist,
+        track=track,
+        played_at=datetime.fromtimestamp(timestamp, timezone.utc),
+    )
 
 
 def is_placeholder(url: str | None) -> bool:
@@ -282,6 +316,126 @@ class LastFMClient:
         return await self._get_top(
             "user.gettopalbums", "topalbums", "album", username, period=period, limit=limit
         )
+
+    async def get_recent_tracks(
+        self,
+        username: str,
+        *,
+        since: datetime,
+        until: datetime,
+        max_tracks: int = 1000,
+    ) -> tuple[Scrobble, ...]:
+        """Fetch an evenly spread sample of scrobbles inside a time window.
+
+        The first page determines the number of available pages. When the
+        window contains more than ``max_tracks`` scrobbles, pages are sampled
+        evenly across the range (including the first and last page) and each
+        parsed scrobble is weighted by ``total / sample_size``.
+        """
+        page_size = 200
+        max_pages = max(1, math.ceil(max(1, int(max_tracks)) / page_size))
+        base = {
+            "method": "user.getrecenttracks",
+            "user": username,
+            "from": int(since.timestamp()),
+            "to": int(until.timestamp()),
+            "limit": page_size,
+        }
+
+        payload = await self._request({**base, "page": 1})
+        section = payload.get("recenttracks")
+        if not isinstance(section, Mapping):
+            return ()
+        attr = section.get("@attr")
+        total = _as_int(attr.get("total")) if isinstance(attr, Mapping) else 0
+        total_pages = max(
+            1, _as_int(attr.get("totalPages"), 1) if isinstance(attr, Mapping) else 1
+        )
+
+        if total_pages <= max_pages:
+            pages = list(range(2, total_pages + 1))
+        elif max_pages == 1:
+            pages = []
+        else:
+            pages = sorted(
+                {
+                    max(
+                        1,
+                        min(
+                            total_pages,
+                            round(1 + index * (total_pages - 1) / (max_pages - 1)),
+                        ),
+                    )
+                    for index in range(1, max_pages)
+                }
+            )
+
+        rows: list[Any] = []
+        first_rows = section.get("track") or []
+        if isinstance(first_rows, Mapping):
+            first_rows = [first_rows]
+        if isinstance(first_rows, (list, tuple)):
+            rows.extend(first_rows)
+
+        for page in pages:
+            try:
+                extra = await self._request({**base, "page": page})
+            except (LastFMError, LastFMUnavailable) as exc:
+                log.debug("Partial recent-track sample for %s: %s", username, exc)
+                break
+            extra_section = extra.get("recenttracks")
+            if not isinstance(extra_section, Mapping):
+                continue
+            extra_rows = extra_section.get("track") or []
+            if isinstance(extra_rows, Mapping):
+                extra_rows = [extra_rows]
+            if isinstance(extra_rows, (list, tuple)):
+                rows.extend(extra_rows)
+
+        parsed: list[Scrobble] = []
+        seen: set[tuple[str, str, datetime]] = set()
+        for row in rows:
+            scrobble = _parse_scrobble(row)
+            if scrobble is None:
+                continue
+            key = (scrobble.artist, scrobble.track, scrobble.played_at)
+            if key in seen:
+                continue
+            seen.add(key)
+            parsed.append(scrobble)
+        parsed.sort(key=lambda item: item.played_at)
+
+        weight = total / len(parsed) if total > len(parsed) and parsed else 1.0
+        return tuple(
+            Scrobble(item.artist, item.track, item.played_at, weight) for item in parsed
+        )
+
+    async def get_artist_top_tags(
+        self, artist: str, *, limit: int = 3
+    ) -> tuple[tuple[str, int], ...]:
+        """Return an artist's top Last.fm tags with positive counts."""
+        payload = await self._request(
+            {"method": "artist.gettoptags", "artist": artist, "autocorrect": 1}
+        )
+        section = payload.get("toptags")
+        if not isinstance(section, Mapping):
+            return ()
+        rows = section.get("tag") or []
+        if isinstance(rows, Mapping):
+            rows = [rows]
+        if not isinstance(rows, (list, tuple)):
+            return ()
+        tags: list[tuple[str, int]] = []
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            name = _as_text(row.get("name"))
+            count = _as_int(row.get("count"))
+            if name and count > 0:
+                tags.append((name, count))
+            if len(tags) >= max(1, int(limit)):
+                break
+        return tuple(tags)
 
     async def fetch_charts(
         self,

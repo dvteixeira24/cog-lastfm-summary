@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import aiohttp
 import pytest
 
@@ -272,6 +274,140 @@ async def test_fetch_charts_uses_album_method(monkeypatch):
     client, session, _ = client_with({"alice": FakeResponse(payload=payload)}, monkeypatch)
     await client.fetch_charts(["alice"], source="albums", period="monthly")
     assert session.requests[0]["method"] == "user.gettopalbums"
+
+
+def recent_payload(rows, *, total=None, total_pages=1):
+    return {
+        "recenttracks": {
+            "@attr": {
+                "page": "1",
+                "perPage": "200",
+                "totalPages": str(total_pages),
+                "total": str(total if total is not None else len(rows)),
+            },
+            "track": rows,
+        }
+    }
+
+
+def recent_row(artist, track, uts):
+    return {
+        "artist": {"#text": artist},
+        "name": track,
+        "date": {"uts": str(uts)},
+    }
+
+
+@pytest.mark.asyncio
+async def test_recent_tracks_parses_skips_now_playing_and_scales(monkeypatch):
+    rows = [
+        recent_row("Radiohead", "Airbag", 1000),
+        {
+            "artist": {"#text": "Radiohead"},
+            "name": "Now Playing",
+            "@attr": {"nowplaying": "true"},
+        },
+        {"artist": {"#text": "Broken"}, "name": "No Date"},
+    ]
+    client, session, _ = client_with(
+        {"someone": FakeResponse(payload=recent_payload(rows, total=10, total_pages=1))},
+        monkeypatch,
+    )
+    since = datetime.fromtimestamp(900, timezone.utc)
+    until = datetime.fromtimestamp(1100, timezone.utc)
+    scrobbles = await client.get_recent_tracks("someone", since=since, until=until)
+
+    assert len(scrobbles) == 1
+    assert scrobbles[0].artist == "Radiohead"
+    assert scrobbles[0].track == "Airbag"
+    assert scrobbles[0].played_at == datetime.fromtimestamp(1000, timezone.utc)
+    assert scrobbles[0].weight == 10.0
+    assert session.requests[0]["method"] == "user.getrecenttracks"
+    assert session.requests[0]["from"] == 900
+    assert session.requests[0]["to"] == 1100
+
+
+@pytest.mark.asyncio
+async def test_recent_tracks_samples_pages_evenly(monkeypatch):
+    pages = {
+        1: recent_payload([recent_row("A", "1", 1000)], total=2000, total_pages=20),
+        6: recent_payload([recent_row("B", "2", 2000)], total=2000, total_pages=20),
+        10: recent_payload([recent_row("C", "3", 3000)], total=2000, total_pages=20),
+        15: recent_payload([recent_row("D", "4", 4000)], total=2000, total_pages=20),
+        20: recent_payload([recent_row("E", "5", 5000)], total=2000, total_pages=20),
+    }
+
+    class PageSession(FakeSession):
+        def get(self, url, params=None, **kwargs):
+            self.requests.append(dict(params or {}))
+            return FakeResponse(payload=pages[int(params["page"])])
+
+    async def no_sleep(delay):
+        return None
+
+    monkeypatch.setattr("lastfmsummary.lastfm.asyncio.sleep", no_sleep)
+    session = PageSession({})
+    client = LastFMClient("key", session=session)
+    scrobbles = await client.get_recent_tracks(
+        "someone",
+        since=datetime.fromtimestamp(900, timezone.utc),
+        until=datetime.fromtimestamp(6000, timezone.utc),
+    )
+
+    assert [item.artist for item in scrobbles] == ["A", "B", "C", "D", "E"]
+    assert [request["page"] for request in session.requests] == [1, 6, 10, 15, 20]
+    assert all(item.weight == 400.0 for item in scrobbles)
+
+
+@pytest.mark.asyncio
+async def test_recent_tracks_tolerates_partial_page_failure(monkeypatch):
+    first = recent_payload([recent_row("A", "1", 1000)], total=600, total_pages=3)
+    second = recent_payload([recent_row("B", "2", 2000)], total=600, total_pages=3)
+
+    class PageSession(FakeSession):
+        def get(self, url, params=None, **kwargs):
+            page = int(params["page"])
+            if page == 3:
+                raise aiohttp.ClientConnectionError("offline")
+            self.requests.append(dict(params))
+            return FakeResponse(payload=first if page == 1 else second)
+
+    async def no_sleep(delay):
+        return None
+
+    monkeypatch.setattr("lastfmsummary.lastfm.asyncio.sleep", no_sleep)
+    client = LastFMClient("key", session=PageSession({}))
+    scrobbles = await client.get_recent_tracks(
+        "someone",
+        since=datetime.fromtimestamp(900, timezone.utc),
+        until=datetime.fromtimestamp(4000, timezone.utc),
+    )
+
+    assert [item.artist for item in scrobbles] == ["A", "B"]
+    assert all(item.weight == 300.0 for item in scrobbles)
+
+
+@pytest.mark.asyncio
+async def test_artist_top_tags_parses_and_limits(monkeypatch):
+    payload = {
+        "toptags": {
+            "tag": [
+                {"name": "shoegaze", "count": "100"},
+                {"name": "dream pop", "count": "80"},
+                {"name": "seen live", "count": "60"},
+                {"name": "zero", "count": "0"},
+                {"name": "", "count": "10"},
+            ]
+        }
+    }
+    client, session, _ = client_with(
+        {None: FakeResponse(payload=payload)},
+        monkeypatch,
+    )
+    tags = await client.get_artist_top_tags("Slowdive", limit=3)
+    assert tags == (("shoegaze", 100), ("dream pop", 80), ("seen live", 60))
+    assert session.requests[0]["method"] == "artist.gettoptags"
+    assert session.requests[0]["artist"] == "Slowdive"
 
 
 def test_client_requires_api_key():
