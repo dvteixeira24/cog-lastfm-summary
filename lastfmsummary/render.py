@@ -292,8 +292,10 @@ def render_grid(
     footer_font = load_font(max(12, int(cover * 0.048)))
     empty_font = load_font(max(13, int(cover * 0.058)), bold=True)
 
-    has_tags = genres is not None and bool(genres.series)
-    has_clock = clock is not None
+    has_tags = genres is not None and any(
+        any(value > 0 for value in series.values) for series in genres.series
+    )
+    has_clock = clock is not None and any(value > 0 for value in clock.hourly)
     insights_gap = max(24, int(cover * 0.12))
     plot_h = max(190, min(360, int(width * 0.28)))
     dial = max(190, min(340, int(width * 0.30)))
