@@ -17,7 +17,14 @@ from typing import Mapping, Sequence
 import aiohttp
 from PIL import Image, ImageDraw, ImageFont
 
+from .charts import (
+    draw_genre_chart,
+    draw_listening_clock,
+    draw_section_title,
+    section_title_height,
+)
 from .lastfm import is_placeholder
+from .listening import GenreTimeline, ListeningClock
 
 log = logging.getLogger("red.lastfmsummary.render")
 
@@ -258,12 +265,15 @@ def render_grid(
     subtitle: str,
     footer: str,
     covers: Mapping[str, bytes | None],
+    genres: GenreTimeline | None = None,
+    clock: ListeningClock | None = None,
 ) -> bytes:
     """Render a square grid of entries and return PNG bytes.
 
     Missing covers and empty slots render as styled placeholders, so the layout
     stays consistent regardless of cover availability. Caption strips are sized
-    to the text they hold.
+    to the text they hold. When provided, the genre timeline and listening clock
+    are appended below the grid.
     """
     size = max(MIN_GRID, min(MAX_GRID, int(grid_size)))
     cover = 300 if size <= 4 else 220 if size <= 6 else 170
@@ -281,6 +291,40 @@ def render_grid(
     sub_font = load_font(max(12, int(cover * 0.052)))
     footer_font = load_font(max(12, int(cover * 0.048)))
     empty_font = load_font(max(13, int(cover * 0.058)), bold=True)
+
+    has_tags = genres is not None and bool(genres.series)
+    has_clock = clock is not None
+    insights_gap = max(24, int(cover * 0.12))
+    plot_h = max(190, min(360, int(width * 0.28)))
+    dial = max(190, min(340, int(width * 0.30)))
+    section_font = load_font(max(16, min(30, int(width * 0.024))), bold=True)
+    band_font = load_font(max(11, min(18, int(width * 0.015))), bold=True)
+    tick_font = load_font(max(10, min(15, int(width * 0.012))))
+    stat_label_font = load_font(max(13, min(18, int(width * 0.016))))
+    stat_value_font = load_font(max(26, min(46, int(width * 0.045))), bold=True)
+    note_font = load_font(max(10, min(14, int(width * 0.012))))
+
+    section_title_h = section_title_height(section_font)
+    tick_h = _metric(tick_font) + 8
+    stat_h = (
+        _metric(stat_label_font)
+        + 4
+        + _metric(stat_value_font)
+        + max(18, int(dial * 0.08))
+        + _metric(stat_label_font)
+        + 4
+        + _metric(stat_value_font)
+    )
+    if has_clock and clock is not None and clock.total > clock.sampled:
+        stat_h += 8 + _metric(note_font)
+    clock_content_h = max(dial, stat_h)
+    extra_height = 0
+    if has_tags:
+        extra_height += insights_gap + section_title_h + plot_h + tick_h
+    if has_clock:
+        extra_height += insights_gap + section_title_h + clock_content_h
+    if has_tags or has_clock:
+        extra_height += insights_gap
 
     visible = list(tiles)[: size * size]
     inner_width = cover - 20
@@ -309,7 +353,16 @@ def render_grid(
 
     caption_h = max((content_h for _, content_h in layouts), default=0) + caption_pad * 2
     tile_h = cover + caption_h
-    height = pad + header_h + gap + size * tile_h + (size - 1) * gap + footer_h + pad
+    height = (
+        pad
+        + header_h
+        + gap
+        + size * tile_h
+        + (size - 1) * gap
+        + extra_height
+        + footer_h
+        + pad
+    )
 
     canvas = Image.new("RGBA", (width, height), BACKGROUND)
     draw = ImageDraw.Draw(canvas)
@@ -387,6 +440,62 @@ def render_grid(
                 sub_font,
                 MUTED,
             )
+
+    grid_bottom = pad + header_h + gap + size * tile_h + (size - 1) * gap
+    section_y = grid_bottom
+
+    if has_tags and genres is not None:
+        section_y += insights_gap
+        consumed = draw_section_title(
+            draw,
+            left=pad,
+            right=width - pad,
+            top=section_y,
+            title="Top tags",
+            font=section_font,
+        )
+        plot_top = section_y + consumed
+        plot_bottom = plot_top + plot_h
+        tick_y = plot_bottom + 8
+        draw_genre_chart(
+            canvas,
+            draw,
+            genres,
+            left=pad,
+            top=plot_top,
+            right=width - pad,
+            bottom=plot_bottom,
+            tick_y=tick_y,
+            label_font=band_font,
+            tick_font=tick_font,
+        )
+        section_y = tick_y + _metric(tick_font)
+
+    if has_clock and clock is not None:
+        section_y += insights_gap
+        consumed = draw_section_title(
+            draw,
+            left=pad,
+            right=width - pad,
+            top=section_y,
+            title="Listening clock",
+            font=section_font,
+        )
+        content_top = section_y + consumed
+        stats_left = pad + dial + max(24, int(width * 0.04))
+        draw_listening_clock(
+            canvas,
+            draw,
+            left=pad,
+            top=content_top,
+            diameter=dial,
+            stats_left=stats_left,
+            stats_right=width - pad,
+            clock=clock,
+            value_font=stat_value_font,
+            label_font=stat_label_font,
+            small_font=note_font,
+        )
 
     footer_y = height - pad - footer_h
     draw.line((pad, footer_y, width - pad, footer_y), fill=(48, 48, 58, 255), width=1)

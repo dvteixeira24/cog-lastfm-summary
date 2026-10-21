@@ -3,6 +3,7 @@ import io
 import pytest
 from PIL import Image
 
+from lastfmsummary.listening import GenreTimeline, ListeningClock, TagSeries
 from lastfmsummary.render import Tile, download_covers, load_font, render_grid
 
 
@@ -38,9 +39,74 @@ def render(tiles, grid_size, **kwargs):
         subtitle=kwargs.get("subtitle", "Test Server \u2022 1\u201321 October"),
         footer=kwargs.get("footer", "4 listeners \u2022 1,234 plays \u2022 the last month"),
         covers=kwargs.get("covers", {}),
+        genres=kwargs.get("genres"),
+        clock=kwargs.get("clock"),
     )
     assert data.startswith(b"\x89PNG\r\n\x1a\n")
     return data
+
+
+def sample_genres():
+    return GenreTimeline(
+        labels=("10 Sep", "17 Sep", "24 Sep", "01 Oct", "08 Oct", "15 Oct"),
+        series=(
+            TagSeries("electronic", (4, 6, 5, 7, 6, 8)),
+            TagSeries("indie pop", (2, 3, 4, 2, 5, 3)),
+            TagSeries("shoegaze", (1, 2, 1, 3, 2, 1)),
+        ),
+    )
+
+
+def sample_clock():
+    hourly = tuple(0.0 if hour != 17 else 96.0 for hour in range(24))
+    return ListeningClock(
+        hourly=hourly,
+        busiest_hour=17,
+        busiest_count=96,
+        total=1000,
+        sampled=1000,
+    )
+
+
+def test_render_extras_grow_the_image_and_stay_deterministic():
+    base = render(sample_tiles(9), 3)
+    with_extras = render(
+        sample_tiles(9), 3, genres=sample_genres(), clock=sample_clock()
+    )
+    again = render(
+        sample_tiles(9), 3, genres=sample_genres(), clock=sample_clock()
+    )
+    with Image.open(io.BytesIO(base)) as image:
+        base_size = image.size
+    with Image.open(io.BytesIO(with_extras)) as image:
+        assert image.size[0] == base_size[0]
+        assert image.size[1] > base_size[1]
+    assert with_extras == again
+
+
+def test_render_extras_support_one_chart_and_small_grids():
+    only_tags = render(sample_tiles(4), 2, genres=sample_genres())
+    only_clock = render(sample_tiles(4), 2, clock=sample_clock())
+    both = render(sample_tiles(4), 2, genres=sample_genres(), clock=sample_clock())
+    assert only_tags.startswith(b"\x89PNG")
+    assert only_clock.startswith(b"\x89PNG")
+    assert both.startswith(b"\x89PNG")
+
+
+def test_render_extras_handle_a_single_tag_and_sampled_note():
+    genres = GenreTimeline(
+        labels=("01 Oct", "02 Oct"),
+        series=(TagSeries("a very long genre name that should still fit", (3, 5)),),
+    )
+    clock = ListeningClock(
+        hourly=tuple(1.0 for _ in range(24)),
+        busiest_hour=0,
+        busiest_count=2,
+        total=5000,
+        sampled=1000,
+    )
+    data = render(sample_tiles(4), 2, genres=genres, clock=clock)
+    assert data.startswith(b"\x89PNG")
 
 
 def test_render_caption_height_adapts_to_text():
