@@ -20,17 +20,13 @@ class FakeClient:
 async def test_resolve_artist_tags_caches_hits_and_misses(tmp_path):
     cache = tmp_path / "tags.json"
     first = FakeClient({"Radiohead": (("art rock", 100),), "Unknown": ()})
-    result = await resolve_artist_tags(
-        ["Radiohead", "Unknown"], client=first, cache_path=cache
-    )
+    result = await resolve_artist_tags(["Radiohead", "Unknown"], client=first, cache_path=cache)
     assert result["radiohead"] == (("art rock", 100),)
     assert result["unknown"] == ()
     assert cache.exists()
 
     second = FakeClient({"Radiohead": pytest.fail, "Unknown": pytest.fail})
-    cached = await resolve_artist_tags(
-        ["Radiohead", "Unknown"], client=second, cache_path=cache
-    )
+    cached = await resolve_artist_tags(["Radiohead", "Unknown"], client=second, cache_path=cache)
     assert cached == result
     assert second.calls == []
 

@@ -159,9 +159,7 @@ def draw_genre_chart(
     center = top + height / 2
     steps = max(2, int(width / 2))
     sample_xs = [left + width * index / (steps - 1) for index in range(steps)]
-    interpolated = [
-        [_value_at(item, xs, x) for x in sample_xs] for item in values
-    ]
+    interpolated = [[_value_at(item, xs, x) for x in sample_xs] for item in values]
 
     supersample = 3
     band_layer = Image.new(
@@ -181,9 +179,7 @@ def draw_genre_chart(
             lower.append(((x - left) * supersample, (band_bottom - top) * supersample))
         polygon = upper + list(reversed(lower))
         if len(polygon) >= 3:
-            band_draw.polygon(
-                polygon, fill=TAG_COLORS[series_index % len(TAG_COLORS)]
-            )
+            band_draw.polygon(polygon, fill=TAG_COLORS[series_index % len(TAG_COLORS)])
     smoothed = band_layer.resize((width, height), Image.Resampling.LANCZOS)
     canvas.alpha_composite(smoothed, (left, top))
 
@@ -295,9 +291,7 @@ def draw_listening_clock(
             radius = inner + (outer - inner) * share
             angle = -90 + hour * 15 + 1
             color = (
-                CLOCK_PEAK
-                if hour == clock.busiest_hour
-                else _blend(CLOCK_LOW, CLOCK_HIGH, share)
+                CLOCK_PEAK if hour == clock.busiest_hour else _blend(CLOCK_LOW, CLOCK_HIGH, share)
             )
             layer_draw.pieslice(
                 (
@@ -336,11 +330,7 @@ def draw_listening_clock(
     max_width = max(1, stats_right - stats_left)
     y = top + max(
         0.0,
-        (
-            diameter
-            - _stats_height(clock, diameter, value_font, label_font, small_font)
-        )
-        / 2,
+        (diameter - _stats_height(clock, diameter, value_font, label_font, small_font)) / 2,
     )
     draw.text((x, y), "Busiest hour", font=label_font, fill=MUTED)
     y += _metric(label_font) + 4
@@ -358,9 +348,7 @@ def draw_listening_clock(
 
     if clock.total > clock.sampled:
         y += 8
-        note = (
-            f"Estimated from {clock.sampled:,} of {clock.total:,} scrobbles"
-        )
+        note = f"Estimated from {clock.sampled:,} of {clock.total:,} scrobbles"
         draw.text(
             (x, y),
             _fit_text(draw, note, small_font, max_width),

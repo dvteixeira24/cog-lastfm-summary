@@ -70,12 +70,8 @@ def sample_clock():
 
 def test_render_extras_grow_the_image_and_stay_deterministic():
     base = render(sample_tiles(9), 3)
-    with_extras = render(
-        sample_tiles(9), 3, genres=sample_genres(), clock=sample_clock()
-    )
-    again = render(
-        sample_tiles(9), 3, genres=sample_genres(), clock=sample_clock()
-    )
+    with_extras = render(sample_tiles(9), 3, genres=sample_genres(), clock=sample_clock())
+    again = render(sample_tiles(9), 3, genres=sample_genres(), clock=sample_clock())
     with Image.open(io.BytesIO(base)) as image:
         base_size = image.size
     with Image.open(io.BytesIO(with_extras)) as image:

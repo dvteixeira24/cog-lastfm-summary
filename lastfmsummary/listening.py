@@ -72,9 +72,7 @@ def _local_time(value: datetime, tz: ZoneInfo | timezone) -> datetime:
     return value.astimezone(tz)
 
 
-def build_listening_clock(
-    scrobbles: Sequence[Scrobble], *, tz_name: str
-) -> ListeningClock | None:
+def build_listening_clock(scrobbles: Sequence[Scrobble], *, tz_name: str) -> ListeningClock | None:
     """Bucket weighted scrobbles by local hour and find the busiest hour."""
     if not scrobbles:
         return None
@@ -123,9 +121,7 @@ def build_genre_timeline(
     for item in scrobbles:
         tags = tags_by_artist.get(text_key(item.artist)) or ()
         selected = [
-            (name, count)
-            for name, count in tags
-            if count > 0 and text_key(name) not in NOISE_TAGS
+            (name, count) for name, count in tags if count > 0 and text_key(name) not in NOISE_TAGS
         ]
         if not selected:
             continue

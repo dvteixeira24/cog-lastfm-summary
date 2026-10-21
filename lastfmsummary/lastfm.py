@@ -348,9 +348,7 @@ class LastFMClient:
             return ()
         attr = section.get("@attr")
         total = _as_int(attr.get("total")) if isinstance(attr, Mapping) else 0
-        total_pages = max(
-            1, _as_int(attr.get("totalPages"), 1) if isinstance(attr, Mapping) else 1
-        )
+        total_pages = max(1, _as_int(attr.get("totalPages"), 1) if isinstance(attr, Mapping) else 1)
 
         if total_pages <= max_pages:
             pages = list(range(2, total_pages + 1))
@@ -406,9 +404,7 @@ class LastFMClient:
         parsed.sort(key=lambda item: item.played_at)
 
         weight = total / len(parsed) if total > len(parsed) and parsed else 1.0
-        return tuple(
-            Scrobble(item.artist, item.track, item.played_at, weight) for item in parsed
-        )
+        return tuple(Scrobble(item.artist, item.track, item.played_at, weight) for item in parsed)
 
     async def get_artist_top_tags(
         self, artist: str, *, limit: int = 3

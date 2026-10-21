@@ -353,16 +353,7 @@ def render_grid(
 
     caption_h = max((content_h for _, content_h in layouts), default=0) + caption_pad * 2
     tile_h = cover + caption_h
-    height = (
-        pad
-        + header_h
-        + gap
-        + size * tile_h
-        + (size - 1) * gap
-        + extra_height
-        + footer_h
-        + pad
-    )
+    height = pad + header_h + gap + size * tile_h + (size - 1) * gap + extra_height + footer_h + pad
 
     canvas = Image.new("RGBA", (width, height), BACKGROUND)
     draw = ImageDraw.Draw(canvas)

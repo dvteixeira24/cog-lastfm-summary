@@ -19,7 +19,13 @@ from lastfmsummary.cog import (  # noqa: E402
     _parse_iso,
     _registration_usernames,
 )
-from lastfmsummary.lastfm import Entry, LastFMError, LastFMUser, MemberChart  # noqa: E402
+from lastfmsummary.lastfm import (  # noqa: E402
+    Entry,
+    LastFMError,
+    LastFMUser,
+    MemberChart,
+    Scrobble,
+)
 
 
 class FakeBot:
@@ -252,6 +258,109 @@ async def test_post_charts_posts_one_grid_per_member(cog, monkeypatch, tmp_path)
     assert first["file"].filename == "lastfm-alice.png"
     assert first["allowed_mentions"].everyone is False
     assert channel.sent[1]["embed"].title == "Bob's Top Artists — Monthly"
+
+
+@pytest.mark.asyncio
+async def test_post_charts_passes_insights_to_renderer(cog, monkeypatch, tmp_path):
+    chart = MemberChart("alice", (Entry("Slowdive", None, 10, None),))
+
+    class FakeClient:
+        def __init__(self, key):
+            pass
+
+        async def fetch_charts(self, usernames, **kwargs):
+            return [chart]
+
+        async def get_recent_tracks(self, username, **kwargs):
+            return (
+                Scrobble(
+                    "Slowdive",
+                    "Alison",
+                    datetime(2026, 10, 1, 17, tzinfo=timezone.utc),
+                    1.0,
+                ),
+                Scrobble(
+                    "Slowdive",
+                    "When the Sun Hits",
+                    datetime(2026, 10, 2, 18, tzinfo=timezone.utc),
+                    1.0,
+                ),
+            )
+
+        async def close(self):
+            return None
+
+    async def fake_key():
+        return "key"
+
+    async def fake_tags(names, **kwargs):
+        return {"slowdive": (("shoegaze", 100),)}
+
+    async def fake_covers(urls, **kwargs):
+        return {}
+
+    captured = {}
+
+    def fake_render(**kwargs):
+        captured.update(kwargs)
+        return PNG
+
+    monkeypatch.setattr("lastfmsummary.cog.LastFMClient", FakeClient)
+    monkeypatch.setattr(cog, "_api_key", fake_key)
+    monkeypatch.setattr("lastfmsummary.cog.resolve_artist_tags", fake_tags)
+    monkeypatch.setattr(LastFMSummary, "_cache_dir", property(lambda self: tmp_path))
+    monkeypatch.setattr("lastfmsummary.cog.download_covers", fake_covers)
+    monkeypatch.setattr("lastfmsummary.cog.render_grid", fake_render)
+
+    report = await cog._post_charts(fake_guild(FakeChannel()), FakeChannel(), settings())
+
+    assert report.posted == 1
+    assert captured["genres"] is not None
+    assert captured["genres"].series[0].name == "shoegaze"
+    assert captured["clock"] is not None
+    assert captured["clock"].busiest_hour == 17
+
+
+@pytest.mark.asyncio
+async def test_post_charts_survives_insight_failure(cog, monkeypatch, tmp_path):
+    chart = MemberChart("alice", (Entry("Slowdive", None, 10, None),))
+
+    class FakeClient:
+        def __init__(self, key):
+            pass
+
+        async def fetch_charts(self, usernames, **kwargs):
+            return [chart]
+
+        async def get_recent_tracks(self, username, **kwargs):
+            raise RuntimeError("history down")
+
+        async def close(self):
+            return None
+
+    async def fake_key():
+        return "key"
+
+    async def fake_covers(urls, **kwargs):
+        return {}
+
+    captured = {}
+
+    def fake_render(**kwargs):
+        captured.update(kwargs)
+        return PNG
+
+    monkeypatch.setattr("lastfmsummary.cog.LastFMClient", FakeClient)
+    monkeypatch.setattr(cog, "_api_key", fake_key)
+    monkeypatch.setattr(LastFMSummary, "_cache_dir", property(lambda self: tmp_path))
+    monkeypatch.setattr("lastfmsummary.cog.download_covers", fake_covers)
+    monkeypatch.setattr("lastfmsummary.cog.render_grid", fake_render)
+
+    report = await cog._post_charts(fake_guild(FakeChannel()), FakeChannel(), settings())
+
+    assert report.posted == 1
+    assert captured["genres"] is None
+    assert captured["clock"] is None
 
 
 @pytest.mark.asyncio

@@ -31,8 +31,16 @@ from .lastfm import (
     MemberChart,
     is_placeholder,
 )
+from .listening import (
+    GenreTimeline,
+    ListeningClock,
+    build_genre_timeline,
+    build_listening_clock,
+    text_key,
+)
 from .render import Tile, download_covers, render_grid
 from .schedule import (
+    PERIOD_DAYS,
     PERIOD_LABELS,
     compute_next_run,
     format_hhmm,
@@ -42,6 +50,7 @@ from .schedule import (
     validate_timezone,
 )
 from .serp import album_query, artist_query, resolve_serp_images
+from .tags import resolve_artist_tags
 
 log = logging.getLogger("red.lastfmsummary")
 
@@ -52,6 +61,8 @@ DEFAULT_TIME = "09:00"
 DEFAULT_TIMEZONE = "UTC"
 DEFAULT_PERIOD = "monthly"
 DEFAULT_SOURCE = "artists"
+MAX_INSIGHT_SCROBBLES = 1000
+MAX_TAG_ARTISTS = 30
 _USERNAME_URL_RE = re.compile(r"(?:https?://)?(?:www\.)?last\.fm/user/([^/?#\s]+)", re.I)
 
 
@@ -849,6 +860,95 @@ class LastFMSummary(commands.Cog):
 
         return serp_images, deezer_images
 
+    async def _collect_insights(
+        self,
+        client: LastFMClient,
+        charts: Sequence[MemberChart],
+        *,
+        period: str,
+        tz_name: str,
+    ) -> dict[str, tuple[GenreTimeline | None, ListeningClock | None]]:
+        """Best-effort scrobbles, tags, clock and timeline for each member."""
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(days=PERIOD_DAYS.get(period, 30))
+        semaphore = asyncio.Semaphore(3)
+        scrobbles: dict[str, tuple] = {}
+
+        async def one(chart: MemberChart) -> None:
+            async with semaphore:
+                try:
+                    tracks = await client.get_recent_tracks(
+                        chart.username,
+                        since=start,
+                        until=now,
+                        max_tracks=MAX_INSIGHT_SCROBBLES,
+                    )
+                except AttributeError:
+                    log.debug("Client has no recent-track support")
+                    return
+                except (LastFMError, LastFMUnavailable) as exc:
+                    log.warning("Could not fetch recent tracks for %s: %s", chart.username, exc)
+                    return
+                except Exception:
+                    log.exception("Unexpected recent-track failure for %s", chart.username)
+                    return
+            if tracks:
+                scrobbles[chart.username] = tracks
+
+        await asyncio.gather(*(one(chart) for chart in charts))
+        if not scrobbles:
+            return {}
+
+        display: dict[str, str] = {}
+        top_artists: dict[str, set[str]] = {}
+        for username, tracks in scrobbles.items():
+            weights: dict[str, float] = {}
+            for item in tracks:
+                key = text_key(item.artist)
+                weights[key] = weights.get(key, 0.0) + max(0.0, float(item.weight))
+                display.setdefault(key, item.artist)
+            top_artists[username] = {
+                key
+                for key, _ in sorted(weights.items(), key=lambda pair: pair[1], reverse=True)[
+                    :MAX_TAG_ARTISTS
+                ]
+            }
+
+        wanted = {key: display[key] for keys in top_artists.values() for key in keys}
+        try:
+            tags_by_artist = await resolve_artist_tags(
+                wanted.values(),
+                client=client,
+                cache_path=self._cache_dir / "artist-tags.json",
+            )
+        except Exception:
+            log.exception("Could not resolve artist tags")
+            tags_by_artist = {}
+
+        bucket_count = 7 if period == "weekly" else 6
+        insights: dict[str, tuple[GenreTimeline | None, ListeningClock | None]] = {}
+        for username, tracks in scrobbles.items():
+            clock = None
+            timeline = None
+            try:
+                clock = build_listening_clock(tracks, tz_name=tz_name)
+            except Exception:
+                log.exception("Could not build listening clock for %s", username)
+            if tags_by_artist:
+                try:
+                    timeline = build_genre_timeline(
+                        tracks,
+                        tags_by_artist,
+                        start=start,
+                        end=now,
+                        tz_name=tz_name,
+                        bucket_count=bucket_count,
+                    )
+                except Exception:
+                    log.exception("Could not build genre timeline for %s", username)
+            insights[username] = (timeline, clock)
+        return insights
+
     async def _post_chart(
         self,
         guild: discord.Guild,
@@ -861,6 +961,8 @@ class LastFMSummary(commands.Cog):
         period: str,
         serp_images: Mapping[str, str | None] | None = None,
         deezer_images: Mapping[str, str | None] | None = None,
+        genres: GenreTimeline | None = None,
+        clock: ListeningClock | None = None,
     ) -> discord.Message:
         """Render and post a single member's chart."""
         entries = chart.entries[: grid_size * grid_size]
@@ -915,6 +1017,8 @@ class LastFMSummary(commands.Cog):
             subtitle=subtitle,
             footer=footer,
             covers=covers,
+            genres=genres,
+            clock=clock,
         )
 
         filename = _safe_filename(chart.username)
@@ -960,15 +1064,30 @@ class LastFMSummary(commands.Cog):
         period = settings["period"]
         limit = min(200, max(50, grid_size * grid_size * 5))
 
+        insights: dict[str, tuple[GenreTimeline | None, ListeningClock | None]] = {}
         client = LastFMClient(key)
         try:
-            charts = await client.fetch_charts(usernames, source=source, period=period, limit=limit)
-        except LastFMError as exc:
-            if exc.code in {10, 26}:
-                raise SummaryError(
-                    "Last.fm rejected the configured API key. The bot owner must set a valid key."
-                ) from exc
-            raise SummaryError(f"Last.fm rejected the request: {exc.message}") from exc
+            try:
+                charts = await client.fetch_charts(
+                    usernames, source=source, period=period, limit=limit
+                )
+            except LastFMError as exc:
+                if exc.code in {10, 26}:
+                    raise SummaryError(
+                        "Last.fm rejected the configured API key. "
+                        "The bot owner must set a valid key."
+                    ) from exc
+                raise SummaryError(f"Last.fm rejected the request: {exc.message}") from exc
+
+            try:
+                insights = await self._collect_insights(
+                    client,
+                    charts,
+                    period=period,
+                    tz_name=settings["timezone"],
+                )
+            except Exception:
+                log.exception("Could not collect listening insights")
         finally:
             await client.close()
 
@@ -987,6 +1106,7 @@ class LastFMSummary(commands.Cog):
             if chart is None:
                 continue
             display_name = self._display_name(guild, user_id, username)
+            genres, clock = insights.get(username, (None, None))
             try:
                 await self._post_chart(
                     guild,
@@ -998,6 +1118,8 @@ class LastFMSummary(commands.Cog):
                     period=period,
                     serp_images=serp_images,
                     deezer_images=deezer_images,
+                    genres=genres,
+                    clock=clock,
                 )
             except discord.Forbidden:
                 raise
