@@ -219,6 +219,8 @@ for the selected window (up to 50–200 entries depending on grid size). Each
 member's list is rendered as its own grid:
 
 - The grid is filled from rank 1 down to N×N, using Last.fm's chart order.
+- All chart text is set in the bundled
+  [Work Sans](https://fonts.google.com/specimen/Work+Sans) typeface.
 - **Artists** show the artist name; **albums** show the album name and artist.
 - Artist and album art is resolved in this order: Last.fm image → Google Images
   via SerpApi → Deezer → generated initials tile.
@@ -320,5 +322,6 @@ With Red running and the cog loaded:
 
 - Charts and artwork: [Last.fm](https://www.last.fm/)
 - Artist and album art: [SerpApi Google Images](https://serpapi.com/google-images-api), [Deezer](https://www.deezer.com/)
+- Typeface: [Work Sans](https://fonts.google.com/specimen/Work+Sans), SIL Open Font License (see `lastfmsummary/fonts/OFL.txt`)
 - Framework: [Red-DiscordBot](https://github.com/Cog-Creators/Red-DiscordBot)
 - Not affiliated with Last.fm or Discord.

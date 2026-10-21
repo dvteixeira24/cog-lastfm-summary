@@ -3,7 +3,13 @@ import io
 import pytest
 from PIL import Image
 
-from lastfmsummary.render import Tile, download_covers, render_grid
+from lastfmsummary.render import Tile, download_covers, load_font, render_grid
+
+
+def test_load_font_uses_bundled_work_sans():
+    assert load_font(24).getname()[0] == "Work Sans"
+    bold = load_font(24, bold=True)
+    assert bold.getname() == ("Work Sans", "Bold")
 
 
 def png_bytes(color=(120, 90, 200), size=(64, 64)) -> bytes:

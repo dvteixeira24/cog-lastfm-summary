@@ -36,6 +36,9 @@ ACCENT = (72, 199, 142, 255)
 PLACEHOLDER_TEXT = (235, 235, 245, 255)
 EMPTY_TEXT = (120, 120, 138, 255)
 
+_FONT_DIR = Path(__file__).resolve().parent / "fonts"
+_BUNDLED_FONT = _FONT_DIR / "WorkSans-Variable.ttf"
+
 _FONT_CANDIDATES = {
     False: (
         "DejaVuSans.ttf",
@@ -72,14 +75,26 @@ class Tile:
 
 @lru_cache(maxsize=64)
 def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Load a usable font, falling back to Pillow's bundled default."""
+    """Load the bundled Work Sans font, falling back to system fonts, then Pillow."""
+    size = max(1, int(size))
+
+    try:
+        bundled = ImageFont.truetype(str(_BUNDLED_FONT), size)
+    except (OSError, ValueError):
+        bundled = None
+    if bundled is not None:
+        if bold:
+            with contextlib.suppress(OSError, ValueError, AttributeError):
+                bundled.set_variation_by_name("Bold")
+        return bundled
+
     for candidate in _FONT_CANDIDATES[bool(bold)]:
         try:
-            return ImageFont.truetype(candidate, max(1, int(size)))
+            return ImageFont.truetype(candidate, size)
         except (OSError, ValueError):
             continue
     try:
-        return ImageFont.load_default(size=max(1, int(size)))
+        return ImageFont.load_default(size=size)
     except TypeError:  # Pillow < 10.1
         return ImageFont.load_default()
 
