@@ -19,7 +19,7 @@ from lastfmsummary.cog import (  # noqa: E402
     _parse_iso,
     _registration_usernames,
 )
-from lastfmsummary.lastfm import Entry, LastFMUser, MemberChart  # noqa: E402
+from lastfmsummary.lastfm import Entry, LastFMError, LastFMUser, MemberChart  # noqa: E402
 
 
 class FakeBot:
@@ -362,6 +362,28 @@ async def test_post_charts_requires_api_key(cog, monkeypatch):
         return ""
 
     monkeypatch.setattr(cog, "_api_key", fake_key)
+    with pytest.raises(SummaryError, match="API key"):
+        await cog._post_charts(fake_guild(FakeChannel()), FakeChannel(), settings())
+
+
+@pytest.mark.asyncio
+async def test_post_charts_reports_invalid_api_key(cog, monkeypatch, tmp_path):
+    class FakeClient:
+        def __init__(self, key):
+            pass
+
+        async def fetch_charts(self, usernames, **kwargs):
+            raise LastFMError(10, "Invalid API key")
+
+        async def close(self):
+            return None
+
+    async def fake_key():
+        return "bad-key"
+
+    monkeypatch.setattr("lastfmsummary.cog.LastFMClient", FakeClient)
+    monkeypatch.setattr(cog, "_api_key", fake_key)
+    monkeypatch.setattr(LastFMSummary, "_cache_dir", property(lambda self: tmp_path))
     with pytest.raises(SummaryError, match="API key"):
         await cog._post_charts(fake_guild(FakeChannel()), FakeChannel(), settings())
 

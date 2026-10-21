@@ -186,6 +186,7 @@ data; use Red's data deletion commands first if needed.
 | Symptom | Fix |
 | --- | --- |
 | `No Last.fm API key is configured` | Bot owner runs `[p]lastfmset api_key <key>` or sets `LASTFM_API_KEY`. |
+| `Last.fm rejected the configured API key` | The key is invalid or suspended; the bot owner must replace it. |
 | `Last.fm has no user named ...` | Check the username or profile URL. |
 | `The lastfm user ... is already linked` | Each Last.fm account can only be linked once per server. |
 | Summary skips a run | Verify `[p]lastfmset status`: channel still exists, bot can attach files, and members are linked. |

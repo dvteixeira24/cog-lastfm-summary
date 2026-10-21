@@ -256,6 +256,17 @@ async def test_fetch_charts_maps_period_and_reports_failures(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fetch_charts_raises_on_invalid_api_key(monkeypatch):
+    client, _, _ = client_with(
+        {"alice": FakeResponse(payload={"error": 10, "message": "Invalid API key"})},
+        monkeypatch,
+    )
+    with pytest.raises(LastFMError) as excinfo:
+        await client.fetch_charts(["alice"], source="artists", period="weekly")
+    assert excinfo.value.code == 10
+
+
+@pytest.mark.asyncio
 async def test_fetch_charts_uses_album_method(monkeypatch):
     payload = {"topalbums": {"album": []}}
     client, session, _ = client_with({"alice": FakeResponse(payload=payload)}, monkeypatch)

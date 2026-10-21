@@ -851,6 +851,12 @@ class LastFMSummary(commands.Cog):
         client = LastFMClient(key)
         try:
             charts = await client.fetch_charts(usernames, source=source, period=period, limit=limit)
+        except LastFMError as exc:
+            if exc.code in {10, 26}:
+                raise SummaryError(
+                    "Last.fm rejected the configured API key. The bot owner must set a valid key."
+                ) from exc
+            raise SummaryError(f"Last.fm rejected the request: {exc.message}") from exc
         finally:
             await client.close()
 

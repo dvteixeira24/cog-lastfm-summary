@@ -305,6 +305,9 @@ class LastFMClient:
                 try:
                     entries = await fetch(username, period=api_period, limit=limit)
                 except LastFMError as exc:
+                    if exc.code in {10, 26}:
+                        # The key is unusable for every member; fail the whole run.
+                        raise
                     log.warning("Last.fm rejected %s: %s", username, exc)
                 except LastFMUnavailable as exc:
                     log.warning("Could not fetch %s: %s", username, exc)
