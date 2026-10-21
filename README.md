@@ -39,6 +39,8 @@ that member's own image with covers, names and ranks.
 
 ## Installation
 
+### From a Git repository
+
 Add this repository to Red and install the cog:
 
 ```
@@ -47,8 +49,54 @@ Add this repository to Red and install the cog:
 [p]load lastfmsummary
 ```
 
-For local development, copy or symlink this repository into Red's `cogs`
-folder, then `[p]load lastfmsummary`.
+### Local checkout (development)
+
+The fastest way to test unreleased changes is Red's cog path support:
+
+1. Install the cog's Python dependencies into **Red's** Python environment
+   (use the same interpreter/venv that runs Red):
+
+   ```
+   <red-venv>\Scripts\python.exe -m pip install "Pillow>=10.1" tzdata
+   ```
+
+   On Linux/macOS use `<red-venv>/bin/python`.
+
+2. In Discord, add the parent folder that contains the `lastfmsummary` package
+   (not the package folder itself):
+
+   ```
+   [p]addpath D:\Code\cog-lastfm-summary
+   ```
+
+3. Load it as the bot owner:
+
+   ```
+   [p]load lastfmsummary
+   ```
+
+After editing the code, reload it:
+
+```
+[p]reload lastfmsummary
+```
+
+`[p]cogs` lists discovered packages if the load command cannot find it. Red's
+`addpath` changes take effect immediately and do not require a restart.
+
+### Slash commands
+
+Hybrid commands work as `[p]` text commands immediately. To enable the slash
+forms:
+
+```
+[p]slash enablecog LastFMSummary
+[p]slash sync
+```
+
+Run `[p]slash list` first if the cog name differs in your installation. Run
+`[p]slash sync` in the test guild while iterating to avoid waiting for global
+command propagation.
 
 ## Setup
 
@@ -196,6 +244,8 @@ data; use Red's data deletion commands first if needed.
 
 ## Development
 
+Use Python 3.9–3.11 (the versions Red supports):
+
 ```bash
 python -m venv .venv
 .venv/Scripts/activate        # Windows
@@ -206,14 +256,31 @@ ruff check .
 ruff format --check .
 ```
 
-Tests for the pure modules (scheduling, API parsing, rendering) do
-not need Discord or network access. `tests/test_cog.py` is skipped unless Red is
-importable; run it inside a Red environment (Python 3.9–3.11) to verify command
-registration.
+Pure tests (scheduling, API parsing, rendering) do not need Discord or network
+access. `tests/test_cog.py` is skipped unless Red is importable. To run the full
+suite locally, install Red into the same virtual environment:
 
 ```bash
-pytest tests/test_schedule.py tests/test_lastfm.py tests/test_render.py -q
+pip install "Red-DiscordBot @ git+https://github.com/Cog-Creators/Red-DiscordBot.git@V3/develop"
+pytest -q
 ```
+
+Current expected result: 71 tests pass with Red installed, or 41 pass and 1
+skipped without it.
+
+### Manual smoke test
+
+With Red running and the cog loaded:
+
+1. Bot owner: `[p]lastfmset api_key <key>`
+2. Admin: `[p]lastfmset channel #your-test-channel`
+3. Admin: `[p]lastfmset timezone Europe/Berlin`
+4. Member: `[p]lastfm register <lastfm-username>`
+5. Admin: `[p]lastfmset preview @member` to post one chart immediately.
+6. Check `[p]lastfmset status` for the schedule and any recorded error, then
+   run `[p]lastfmset enable` when the preview looks right.
+
+`preview` does not change the schedule, so it is safe to repeat while testing.
 
 ## Credits
 
