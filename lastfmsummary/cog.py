@@ -162,8 +162,16 @@ class LastFMSummary(commands.Cog):
         self._summary_locks: dict[int, asyncio.Lock] = {}
 
     @property
+    def _data_dir(self):
+        return data_manager.cog_data_path(self)
+
+    @property
     def _cache_dir(self):
-        return data_manager.cog_data_path(self) / "covers"
+        return self._data_dir / "covers"
+
+    @property
+    def _tag_cache_path(self):
+        return self._data_dir / "artist-tags.json"
 
     red_end_user_data_statement = (
         "This cog stores, per Discord server, a member's Discord user ID, the "
@@ -919,7 +927,7 @@ class LastFMSummary(commands.Cog):
             tags_by_artist = await resolve_artist_tags(
                 wanted.values(),
                 client=client,
-                cache_path=self._cache_dir / "artist-tags.json",
+                cache_path=self._tag_cache_path,
             )
         except Exception:
             log.exception("Could not resolve artist tags")
