@@ -462,7 +462,7 @@ async def download_covers(
     if pending and session is None:
         session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=10),
-            headers={"User-Agent": "lastfm-summary-cog/1.0 (cover fetch)"},
+            headers={"User-Agent": "lastfm-summary-cog/1.1 (cover fetch)"},
         )
         owned_session = True
 
@@ -483,8 +483,19 @@ async def download_covers(
                     ):
                         results[url] = None
                         return
-                    data = await response.content.read(MAX_IMAGE_BYTES + 1)
-                    if not data or len(data) > MAX_IMAGE_BYTES:
+                    chunks: list[bytes] = []
+                    total = 0
+                    while True:
+                        chunk = await response.content.read(64 * 1024)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > MAX_IMAGE_BYTES:
+                            results[url] = None
+                            return
+                        chunks.append(chunk)
+                    data = b"".join(chunks)
+                    if not data:
                         results[url] = None
                         return
                     results[url] = data

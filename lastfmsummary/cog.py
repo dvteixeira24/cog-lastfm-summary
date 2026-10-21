@@ -18,11 +18,13 @@ from discord.ext import tasks
 from redbot.core import Config, commands, data_manager
 from redbot.core.bot import Red
 
+from .deezer import artist_key, resolve_artist_images
 from .lastfm import (
     LastFMClient,
     LastFMError,
     LastFMUnavailable,
     MemberChart,
+    is_placeholder,
 )
 from .render import Tile, download_covers, render_grid
 from .schedule import (
@@ -119,7 +121,7 @@ class LastFMSummary(commands.Cog):
     """Periodic Last.fm top artists or albums charts for every linked member."""
 
     __author__ = "OpenCode"
-    __version__ = "1.0.0"
+    __version__ = "1.1.0"
 
     def __init__(self, bot: Red) -> None:
         self.bot = bot
@@ -773,21 +775,30 @@ class LastFMSummary(commands.Cog):
         grid_size: int,
         source: str,
         period: str,
+        artist_images: Mapping[str, str | None] | None = None,
     ) -> discord.Message:
         """Render and post a single member's chart."""
         entries = chart.entries[: grid_size * grid_size]
         if not entries:
             raise SummaryError(f"{display_name} has no listening data for this period.")
 
-        tiles = [
-            Tile(
-                name=entry.name,
-                subtitle=entry.artist if source == "albums" else None,
-                image_url=entry.image_url,
-                rank=rank,
+        tiles: list[Tile] = []
+        used_deezer = False
+        for rank, entry in enumerate(entries, start=1):
+            image_url = entry.image_url
+            if source == "artists" and artist_images and is_placeholder(image_url):
+                fallback = artist_images.get(artist_key(entry.name))
+                if fallback:
+                    image_url = fallback
+                    used_deezer = True
+            tiles.append(
+                Tile(
+                    name=entry.name,
+                    subtitle=entry.artist if source == "albums" else None,
+                    image_url=image_url,
+                    rank=rank,
+                )
             )
-            for rank, entry in enumerate(entries, start=1)
-        ]
         covers = await download_covers(
             [tile.image_url for tile in tiles],
             cache_dir=self._cache_dir,
@@ -797,7 +808,8 @@ class LastFMSummary(commands.Cog):
         title = f"{_format_source(source)} — {PERIOD_LABELS[period]}"
         subtitle_parts = [display_name, f"@{chart.username}", guild.name]
         subtitle = " • ".join(part for part in subtitle_parts if part)
-        footer = f"{total_plays:,} plays • {period_window(period)} • Data from Last.fm"
+        credit = "Data: Last.fm & Deezer" if used_deezer else "Data from Last.fm"
+        footer = f"{total_plays:,} plays • {period_window(period)} • {credit}"
         image_bytes = await asyncio.to_thread(
             render_grid,
             tiles=tiles,
@@ -820,7 +832,10 @@ class LastFMSummary(commands.Cog):
             timestamp=datetime.now(timezone.utc),
         )
         embed.set_image(url=f"attachment://{filename}")
-        embed.set_footer(text=f"{total_plays:,} plays • {period_window(period)}")
+        embed_footer = f"{total_plays:,} plays • {period_window(period)}"
+        if used_deezer:
+            embed_footer += " • Artist images via Deezer"
+        embed.set_footer(text=embed_footer)
         return await channel.send(
             embed=embed,
             file=discord.File(io.BytesIO(image_bytes), filename=filename),
@@ -866,6 +881,23 @@ class LastFMSummary(commands.Cog):
             details = f" ({len(failed)} member(s) failed)" if failed else ""
             raise SummaryError(f"Could not fetch any Last.fm charts right now{details}.")
 
+        artist_images: dict[str, str | None] = {}
+        if source == "artists":
+            missing_images = {
+                entry.name
+                for chart in charts
+                for entry in chart.entries[: grid_size * grid_size]
+                if is_placeholder(entry.image_url)
+            }
+            if missing_images:
+                try:
+                    artist_images = await resolve_artist_images(
+                        sorted(missing_images),
+                        cache_path=self._cache_dir / "deezer-artists.json",
+                    )
+                except Exception:
+                    log.exception("Deezer artist image lookup failed")
+
         posted = 0
         errors: list[str] = []
         for user_id, username in registrations.items():
@@ -882,6 +914,7 @@ class LastFMSummary(commands.Cog):
                     grid_size=grid_size,
                     source=source,
                     period=period,
+                    artist_images=artist_images,
                 )
             except discord.Forbidden:
                 raise

@@ -14,6 +14,9 @@ that member's own image with covers, names and ranks.
 - **A chart for every member** - each linked Last.fm account gets its own grid,
   posted separately with that member's name and profile.
 - **Artists or albums** - album tiles show the album and artist name.
+- **Artist portraits** - when Last.fm returns its placeholder artist image, the
+  cog looks up a portrait on Deezer. If neither source has an image, a generated
+  initials tile is used.
 
   ![Example artist grid](docs/sample-artists.png)
 
@@ -34,6 +37,7 @@ that member's own image with covers, names and ranks.
 
 - Red-DiscordBot 3.5.0 or newer (Python 3.9–3.11, as supported by Red)
 - A [Last.fm API key](https://www.last.fm/api/account/create) (free)
+- Deezer artist portraits need no API key or account.
 - `Pillow` and `tzdata` are installed automatically from the cog's
   `info.json` requirements.
 
@@ -203,6 +207,8 @@ member's list is rendered as its own grid:
 
 - The grid is filled from rank 1 down to N×N, using Last.fm's chart order.
 - **Artists** show the artist name; **albums** show the album name and artist.
+- Artist images are resolved in this order: Last.fm image → Deezer portrait →
+  generated initials tile. Deezer lookups are cached on disk for 30 days.
 - The embed and image caption identify the member, their Last.fm handle, and
   the server.
 - `plays` in the footer counts all fetched entries for that member, not just
@@ -225,6 +231,10 @@ No scrobbling or Last.fm authentication is performed, and the API key is only
 used for public read endpoints. The Last.fm API key is stored globally and is
 never shown in full.
 
+When an artist has no usable Last.fm image, only the **artist name** is sent to
+Deezer's public search API. No Discord user data, Last.fm username, or API key
+is sent to Deezer. Resolved image URLs are cached under the cog's data folder.
+
 Members remove their own link with `[p]lastfm unregister` or Red's
 `[p]mydata` commands. Deleting the cog does not automatically delete stored
 data; use Red's data deletion commands first if needed.
@@ -239,7 +249,8 @@ data; use Red's data deletion commands first if needed.
 | `The lastfm user ... is already linked` | Each Last.fm account can only be linked once per server. |
 | Summary skips a run | Verify `[p]lastfmset status`: channel still exists, bot can attach files, and members are linked. |
 | One member's chart is missing | That profile may be private, renamed, or temporarily unavailable. Check `[p]lastfmset status` for the recorded failure. |
-| Images have letter tiles instead of covers | Last.fm returned placeholder/missing artwork; this is normal for obscure artists. |
+| Images have letter tiles instead of covers | Last.fm returned placeholder art and Deezer had no confident match. This is normal for obscure artists. |
+| Artist portraits are missing | Deezer returned no confident match, or the lookup failed; the cog falls back to a generated tile. |
 | Times look wrong | Set the server's timezone with `[p]lastfmset timezone`; the schedule uses local wall-clock time. |
 
 ## Development
@@ -265,7 +276,7 @@ pip install "Red-DiscordBot @ git+https://github.com/Cog-Creators/Red-DiscordBot
 pytest -q
 ```
 
-Current expected result: 71 tests pass with Red installed, or 41 pass and 1
+Current expected result: 84 tests pass with Red installed, or 51 pass and 1
 skipped without it.
 
 ### Manual smoke test
@@ -285,5 +296,6 @@ With Red running and the cog loaded:
 ## Credits
 
 - Charts and artwork: [Last.fm](https://www.last.fm/)
+- Artist portraits: [Deezer](https://www.deezer.com/)
 - Framework: [Red-DiscordBot](https://github.com/Cog-Creators/Red-DiscordBot)
 - Not affiliated with Last.fm or Discord.

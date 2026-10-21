@@ -82,18 +82,23 @@ def test_render_clamps_grid_size():
 
 
 class FakeContent:
-    def __init__(self, data):
+    def __init__(self, data, chunk_size=None):
         self.data = data
+        self.offset = 0
+        self.chunk_size = chunk_size
 
     async def read(self, limit):
-        return self.data[:limit]
+        size = limit if self.chunk_size is None else min(limit, self.chunk_size)
+        chunk = self.data[self.offset : self.offset + size]
+        self.offset += len(chunk)
+        return chunk
 
 
 class FakeResponse:
-    def __init__(self, data=b"", status=200, content_type="image/png"):
+    def __init__(self, data=b"", status=200, content_type="image/png", chunk_size=None):
         self.status = status
         self.headers = {"Content-Type": content_type}
-        self.content = FakeContent(data)
+        self.content = FakeContent(data, chunk_size)
 
     async def __aenter__(self):
         return self
@@ -149,6 +154,14 @@ async def test_download_covers_uses_cache_on_second_call(tmp_path):
     second = await download_covers(["https://img/a.png"], cache_dir=tmp_path, session=offline)
     assert second["https://img/a.png"] == b"aaa"
     assert offline.requested == []
+
+
+@pytest.mark.asyncio
+async def test_download_covers_reads_streamed_bodies(tmp_path):
+    payload = png_bytes(size=(16, 16))
+    session = FakeSession({"https://img/a.png": FakeResponse(payload, chunk_size=7)})
+    result = await download_covers(["https://img/a.png"], cache_dir=tmp_path, session=session)
+    assert result["https://img/a.png"] == payload
 
 
 @pytest.mark.asyncio

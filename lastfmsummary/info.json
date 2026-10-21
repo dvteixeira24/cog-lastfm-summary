@@ -4,7 +4,7 @@
     ],
     "name": "LastFMSummary",
     "short": "Periodic server-wide Last.fm top artists or albums grids",
-    "description": "Members link their Last.fm usernames. The cog periodically builds a top artists or albums grid image for every linked member from their listening and posts it to a configured channel. Admins choose the channel, cadence, grid size, source and timezone.",
+    "description": "Members link their Last.fm usernames. The cog periodically builds a top artists or albums grid image for every linked member from their listening and posts it to a configured channel. Artist portraits fall back to Deezer when Last.fm has no usable image. Admins choose the channel, cadence, grid size, source and timezone.",
     "requirements": [
         "Pillow>=10.1",
         "tzdata"

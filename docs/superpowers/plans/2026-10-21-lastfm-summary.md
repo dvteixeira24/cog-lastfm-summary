@@ -4,7 +4,7 @@
 
 **Goal:** Build a Red-DiscordBot cog that links Last.fm usernames and periodically posts a configurable top artists/albums grid image for every linked member.
 
-**Architecture:** Four focused modules — `schedule.py` (pure timezone math), `lastfm.py` (async API client + per-member charts), `render.py` (Pillow grid), `cog.py` (Config, hybrid commands, scheduler, per-member Discord posting). Tests cover each pure unit without Discord or network.
+**Architecture:** Five focused modules — `schedule.py` (pure timezone math), `lastfm.py` (async API client + per-member charts), `deezer.py` (artist portrait fallback + cache), `render.py` (Pillow grid), `cog.py` (Config, hybrid commands, scheduler, per-member Discord posting). Tests cover each pure unit without Discord or network.
 
 **Tech Stack:** Python 3.9+, Red-DiscordBot 3.5+, discord.py 2.x, aiohttp, Pillow, zoneinfo/tzdata, pytest.
 
@@ -14,11 +14,12 @@
 
 - Create: `lastfmsummary/schedule.py` — period constants, validation, next-run computation.
 - Create: `lastfmsummary/lastfm.py` — records, errors, HTTP client, image selection.
+- Create: `lastfmsummary/deezer.py` — artist portrait lookup, matching, disk cache.
 - Create: `lastfmsummary/render.py` — font/image helpers, cover cache, grid renderer.
 - Create: `lastfmsummary/cog.py` — Config schema, commands, scheduler, posting, data APIs.
 - Create: `lastfmsummary/__init__.py` — `setup()`.
 - Create: `lastfmsummary/info.json`, `info.json`, `README.md`, `LICENSE`, `pyproject.toml`, `.gitignore`.
-- Create: `tests/test_schedule.py`, `tests/test_lastfm.py`, `tests/test_render.py`, `tests/test_cog.py`.
+- Create: `tests/test_schedule.py`, `tests/test_lastfm.py`, `tests/test_deezer.py`, `tests/test_render.py`, `tests/test_cog.py`.
 
 Interfaces locked here (later tasks must use these exact names):
 
@@ -116,6 +117,16 @@ Config keys are exactly those in the spec. Command group names: `lastfm` and `la
   - `download_covers` with 10 s timeout, 8 MB cap, content-type check, disk cache TTL 7 days and opportunistic pruning to 200 files.
 - [x] Run; expected PASS. Inspect one generated PNG manually. Commit `feat: render summary grid images`.
 
+### Task 4b: Deezer artist portraits
+
+**Files:** Create `lastfmsummary/deezer.py`, `tests/test_deezer.py`; modify `lastfmsummary/cog.py`.
+
+- [x] Tests: exact and accent-insensitive matching, rejection of weak matches, `picture_xl` preference, network failures becoming misses, and cache hit/miss behavior.
+- [x] Implement normalized artist keys, Deezer search, a 0.88 similarity floor, four concurrent lookups, 30-day success cache and 7-day miss cache.
+- [x] In `_post_charts`, resolve only missing artist images, pass the mapping to `_post_chart`, and keep Deezer failures non-fatal.
+- [x] Add the Deezer credit to image/embed footers only when a fallback portrait is used.
+- [x] Run; expected PASS. Commit `feat: add Deezer artist portraits`.
+
 ### Task 5: Cog config, member commands, data APIs
 
 **Files:** Create `lastfmsummary/cog.py`, `lastfmsummary/__init__.py`, `tests/test_cog.py`.
@@ -159,7 +170,7 @@ Config keys are exactly those in the spec. Command group names: `lastfm` and `la
 
 ## Self-Review Notes
 
-- Spec coverage: registration/privacy (Task 5), admin config (Task 6), scheduling/DST (Task 1, 6), Last.fm errors/retries (Task 2), per-member chart handling (Task 3), rendering/cache/placeholders (Task 4), packaging/docs/CI (Task 7), verification (Task 8).
+- Spec coverage: registration/privacy (Task 5), admin config (Task 6), scheduling/DST (Task 1, 6), Last.fm errors/retries (Task 2), per-member chart handling (Task 3), rendering/cache/placeholders (Task 4), Deezer portraits (Task 4b), packaging/docs/CI (Task 7), verification (Task 8).
 - No daily cadence by design; documented in spec.
 - `Entry.artist` is `None` for artists and a string for albums throughout.
 - `PostReport.failed` is fed into `last_error` and the preview response.
