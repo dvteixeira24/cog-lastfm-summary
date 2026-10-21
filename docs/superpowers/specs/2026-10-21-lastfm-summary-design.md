@@ -6,28 +6,28 @@ Status: approved for implementation (assumptions recorded below)
 ## Summary
 
 A Red-DiscordBot cog that lets server members register their Last.fm usernames and
-periodically posts a server-wide top-artists (or top-albums) grid image into a
-configured channel. Server admins choose the chart period (weekly, monthly,
-quarterly, half-yearly, yearly), posting time and timezone, grid size, and data
-source.
+periodically posts a top-artists (or top-albums) grid image for every linked
+member into a configured channel. Server admins choose the chart period (weekly,
+monthly, quarterly, half-yearly, yearly), posting time and timezone, grid size,
+and data source.
 
 ## Goals
 
 - Members can link, inspect, and remove their Last.fm username per server.
 - Admins can configure channel, period, source (artists/albums), grid size,
   posting time, timezone, and enable/disable automatic posting.
-- A background scheduler posts a rendered PNG grid on the configured cadence and
-  survives cog reloads and bot restarts.
-- The image contains cover art, names (artist; or album + artist), ranks, and a
-  header/footer with server, period, member count, and total plays.
+- A background scheduler posts one rendered PNG chart per linked member on the
+  configured cadence and survives cog reloads and bot restarts.
+- Each image contains cover art, names (artist; or album + artist), ranks, and a
+  header/footer with the member, server, period, and that member's total plays.
 - Failures (missing key, API outage, no registrations, missing channel) are
   handled without crashing the scheduler and are visible to admins.
 - Core logic is testable without a live Discord bot or Last.fm account.
 
 ## Non-goals
 
-- Per-user automatic grids; the automatic post is one aggregate grid for the
-  server. (On-demand single-user grids are a future idea.)
+- A single combined or server-wide aggregate grid. Every linked member is posted
+  separately, as clarified by the user.
 - Scrobbling, OAuth, or Last.fm writes. Only public read endpoints are used.
 - Daily charts: Last.fm has no 1-day top-chart period, and the required
   getRecentTracks pagination is out of scope.
@@ -40,9 +40,9 @@ source.
 The brief leaves several details open; these are the choices made and can be
 changed later without redesigning the whole cog:
 
-1. The periodic grid aggregates all registered members of that server, weighted
-   by playcount. This matches "server summary" and avoids posting one image per
-   member.
+1. Every registered member gets their own chart. Charts are not merged across
+   members; the clarification "for every registered user, a chart should be
+   posted" defines this behavior.
 2. Period is both the chart window and the posting cadence:
    weekly → 7day/7 days, monthly → 1month, quarterly → 3month, half-yearly →
    6month, yearly → 12month.
@@ -68,7 +68,7 @@ commands after `[p]slash sync`.
 | `lastfm register <username>` | Validate the username through `user.getInfo`, then store it for the author in this guild. |
 | `lastfm unregister` | Remove the author's registration. |
 | `lastfm profile [member]` | Show a member's linked username, profile link, and registration date. |
-| `lastfm members` | List linked members (up to 50, with a count). |
+| `lastfm members` | List linked members (up to 25 shown, with a total count). |
 | `lastfm status` | Show the guild's schedule and whether the caller is registered. |
 
 `lastfm` without a subcommand prints a short help/status summary.
@@ -85,9 +85,9 @@ All commands require `manage_guild` (or Red admin).
 | `lastfmset grid <2-8>` | Set square grid size. |
 | `lastfmset time <HH:MM>` | Set local posting time. |
 | `lastfmset timezone <IANA name>` | Set the schedule timezone (e.g. `Europe/Berlin`). |
-| `lastfmset day <monday..sunday\|1..28>` | Anchor day: weekday for weekly, day of month otherwise. |
+| `lastfmset day <monday..sunday\|1..31>` | Anchor day: weekday for weekly, day of month otherwise. |
 | `lastfmset enable` / `lastfmset disable` | Toggle automatic posting. |
-| `lastfmset preview` | Render and post a grid now in the current channel without changing the schedule. |
+| `lastfmset preview [member]` | Render and post charts now (one member or all linked members) without changing the schedule. |
 | `lastfmset status` | Show full configuration, next run, member count, and last error. |
 | `lastfmset api_key <key>` | Owner only. Store the Last.fm API key globally. |
 
@@ -98,7 +98,7 @@ lastfmsummary/
   __init__.py          setup() entry point
   info.json            Red cog metadata + requirements
   cog.py               LastFMSummary cog: Config, commands, scheduler, posting
-  lastfm.py            async Last.fm client, typed records, errors, aggregation
+  lastfm.py            async Last.fm client, typed records, errors
   schedule.py          pure timezone/period math (next run, period labels)
   render.py            pure Pillow grid renderer and image acquisition helpers
 tests/
@@ -112,7 +112,7 @@ Units and boundaries:
 
 - `schedule.py` has no Discord/Last.fm imports; it converts config into a UTC
   `datetime` and describes the period window.
-- `lastfm.py` owns HTTP, JSON validation, retries, and aggregation. It returns
+- `lastfm.py` owns HTTP, JSON validation and retries. It returns
   plain dataclasses. It does not know about guilds or config.
 - `render.py` owns downloading/caching cover art and drawing. It accepts plain
   `GridEntry` records and returns PNG bytes.
@@ -123,8 +123,9 @@ Data flow for a scheduled post:
 
 ```
 scheduler tick → due guilds → read config + registrations → Last.fm top
-lists per member (bounded concurrency) → aggregate by name → take top N²
-→ download N² images → render PNG → post embed+file → persist run times
+lists per member (bounded concurrency) → take each member's top N² →
+download covers → render one PNG per member → post embed+file each →
+persist run times
 ```
 
 ## Configuration
@@ -147,7 +148,7 @@ Guild:
     "time": "09:00",
     "timezone": "UTC",
     "weekday": 0,        # Monday=0 for weekly
-    "day": 1,            # 1-28 for other periods
+    "day": 1,            # 1-31 for other periods, clamped to month length
     "next_run_at": None, # ISO-8601 UTC
     "last_run_at": None,
     "last_error": None,
@@ -169,7 +170,7 @@ Guild:
 - `timezone` is resolved with `zoneinfo`; `tzdata` is a requirement for hosts
   without a system timezone database (notably Windows).
 - Weekly: next occurrence of `weekday` at local `time`, strictly after `now`.
-- Monthly: next month whose `day` (clamped to 1–28 during validation) is at or
+- Monthly: next month whose `day` (clamped to the month's last day) is at or
   after today, at local `time`.
 - Quarterly: same, restricted to January/April/July/October.
 - Half-yearly: same, restricted to January/July.
@@ -204,22 +205,18 @@ Implementation details:
 - One `aiohttp.ClientSession` per generation, 15 s timeout, custom User-Agent.
 - Bounded concurrency (`asyncio.Semaphore(4)`) across members; Last.fm allows
   roughly 5 requests/second.
-- Each member requests enough entries to make aggregation meaningful:
+- Each member requests enough entries to fill the grid for that member:
   `min(200, max(50, grid_size**2 * 5))`.
-- Retry twice with exponential backoff (0.5 s, 1.5 s) on HTTP 429/5xx and
+- Retry twice with exponential backoff (0.5 s, 1.0 s) on HTTP 429/5xx and
   Last.fm error codes 11/16/29. No retry on invalid key/user.
 - Error mapping: `LastFMError(code, message)`; codes 6/7 → unknown user,
   10/26 → invalid key, 29 → rate limited. HTTP/JSON failures become
   `LastFMUnavailable`.
-- Aggregation (`aggregate_artists`, `aggregate_albums`):
-  - artist key: casefolded name; album key: `(casefolded artist, casefolded album)`;
-  - sums playcounts across members, keeps the most common display spelling,
-    counts distinct contributing members;
-  - picks the largest non-placeholder image URL available;
-  - sorts by plays desc, then name (deterministic);
-  - returns only the top N² entries with rank 1…N²;
-  - if a member's fetch fails, others still count; the result records failed
-    member names so the poster can mention them.
+- Chart preparation:
+  - each member's chart keeps Last.fm's rank order;
+  - only the top N² entries are rendered, ranked 1…N²;
+  - the play total shown in the footer covers all fetched entries;
+  - a failed member does not affect any other member's chart.
 - Last.fm placeholder art is detected (empty URL, the known
   `2a96cbd8b46e442fc41c2b86b821562f` hash, or a URL containing
   `lastfm_img/default`). Placeholder entries render a generated tile.
@@ -233,8 +230,9 @@ Implementation details:
 - Layout: fixed padding, header (title + subtitle), N×N covers, footer.
   - Cover size: 300 px for N≤4, 220 px for N≤6, 170 px for N≤8.
   - Caption height: 20% of cover height, minimum 44 px.
-  - Header: title (e.g. "Top Artists — Monthly"), subtitle with server name.
-  - Footer: "N listeners • X plays • <date range>" and "last.fm".
+  - Header: title (e.g. "Top Artists — Monthly"), subtitle with the member,
+    their Last.fm handle, and the server name.
+  - Footer: "X plays • <date range> • Data from Last.fm" and "last.fm".
 - Each tile: rounded rectangle mask, center-crop cover, rank badge, caption bar
   with name (wrapped to at most 2 lines, ellipsized) and, for albums, artist
   name in smaller muted text.
@@ -247,7 +245,7 @@ Implementation details:
 - Disk cache under `cog_data_path()/covers`: SHA-256(filename+URL) + extension,
   7-day TTL, best-effort writes, pruned opportunistically to 200 files.
 - Render in a thread (`asyncio.to_thread`) because Pillow is synchronous.
-- Output: PNG `BytesIO`, filename `lastfm-summary-<period>.png`, posted with an
+- Output: PNG `BytesIO`, filename `lastfm-<member>.png`, posted with an
   embed (`embed.set_image(url="attachment://...")`) so the Discord client shows
   a preview.
 
@@ -261,10 +259,11 @@ Implementation details:
   that member as failed and continue.
 - Channel deleted or missing permissions: store the error for `status`, log it,
   and keep scheduling; a later fix resumes posting.
-- Fewer aggregated entries than N²: render empty tiles with a subtle
-  "Not enough data" caption rather than stretch.
+- Fewer entries than N²: render empty tiles with a subtle "Not enough data"
+  caption rather than stretch.
 - All members failed: skip posting, store a combined error.
-- Partial member failures: post with footer note "N member(s) unavailable".
+- Partial member failures: post the successful charts; store and report the
+  failed member names.
 - Config validation: clamp invalid stored values at read time (grid 2–8,
   unknown period/source/timezone fall back to defaults) so corrupt config cannot
   break the loop.
@@ -284,9 +283,8 @@ Implementation details:
 - `test_schedule.py`: exact next-run values for each period, weekday handling,
   month/quarter boundaries, DST transitions, overdue/timezone edge cases.
 - `test_lastfm.py`: JSON parsing via a fake transport (no network), image size
-  selection and placeholder detection, retry policy, error mapping, artist and
-  album aggregation (case folding, sums, rank order, truncation, contributor
-  counts), member failure accounting.
+  selection and placeholder detection, retry policy, error mapping, and
+  per-member fetch failure accounting.
 - `test_render.py`: generated art for 2×2 and 3×3, exact canvas dimensions,
   deterministic placeholders, long names, missing covers, PNG signature.
 - `test_cog.py`: command/config wiring if Red imports; otherwise skipped with a
@@ -304,7 +302,7 @@ Implementation details:
 
 ## Future ideas (explicitly out of scope)
 
-- Personal on-demand grids (`lastfm grid [member]`).
+- A combined server-wide ranking in addition to per-member charts.
 - Monthly/yearly recap images with top tracks and listening time.
 - Slash autocomplete for timezone/period.
 - Per-guild weighted mode (mute members, weight by plays).

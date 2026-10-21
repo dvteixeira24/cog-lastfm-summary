@@ -1,0 +1,26 @@
+{
+    "author": [
+        "OpenCode"
+    ],
+    "name": "LastFMSummary",
+    "short": "Periodic server-wide Last.fm top artists or albums grids",
+    "description": "Members link their Last.fm usernames. The cog periodically builds a top artists or albums grid image for every linked member from their listening and posts it to a configured channel. Admins choose the channel, cadence, grid size, source and timezone.",
+    "requirements": [
+        "Pillow>=10.1",
+        "tzdata"
+    ],
+    "min_bot_version": "3.5.0",
+    "min_python_version": [
+        3,
+        9,
+        0
+    ],
+    "tags": [
+        "lastfm",
+        "music",
+        "summary",
+        "image",
+        "utility"
+    ],
+    "end_user_data_statement": "This cog stores, per Discord server, a member's Discord user ID, the Last.fm username they registered, and the registration timestamp. The data is used only to build server listening summaries. Members can remove their entry with the lastfm unregister command, and server data can be removed with Red's mydata commands."
+}
