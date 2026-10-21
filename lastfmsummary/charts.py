@@ -213,7 +213,16 @@ def draw_genre_chart(
         draw.text((text_left, text_top), text, font=label_font, fill=TEXT)
 
     for x, label in zip(xs, labels):
-        _draw_centered(draw, (x, tick_y + _metric(tick_font) / 2), label, tick_font, MUTED)
+        box = draw.textbbox((0, 0), label, font=tick_font)
+        label_width = box[2] - box[0]
+        center_x = max(left + label_width / 2, min(right - label_width / 2, x))
+        _draw_centered(
+            draw,
+            (center_x, tick_y + _metric(tick_font) / 2),
+            label,
+            tick_font,
+            MUTED,
+        )
 
 
 def _nearest(xs: Sequence[float], x: float) -> int:
