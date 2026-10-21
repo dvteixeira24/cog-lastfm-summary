@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "OpenCode" }]
-dependencies = ["Pillow>=10.1", "tzdata"]
+dependencies = ["Pillow>=10.1", "tzdata", "aiohttp>=3.8"]
 
 [project.optional-dependencies]
 dev = [
