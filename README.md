@@ -14,9 +14,9 @@ that member's own image with covers, names and ranks.
 - **A chart for every member** - each linked Last.fm account gets its own grid,
   posted separately with that member's name and profile.
 - **Artists or albums** - album tiles show the album and artist name.
-- **Artist portraits** - when Last.fm returns its placeholder artist image, the
-  cog looks up a portrait on Deezer. If neither source has an image, a generated
-  initials tile is used.
+- **Artist and album art** - when Last.fm returns placeholder art, the cog
+  searches Google Images through SerpApi, then falls back to Deezer, then to a
+  generated initials tile.
 
   ![Example artist grid](docs/sample-artists.png)
 
@@ -37,7 +37,9 @@ that member's own image with covers, names and ranks.
 
 - Red-DiscordBot 3.5.0 or newer (Python 3.9–3.11, as supported by Red)
 - A [Last.fm API key](https://www.last.fm/api/account/create) (free)
-- Deezer artist portraits need no API key or account.
+- A [SerpApi key](https://serpapi.com/) for Google Images fallback (optional but
+  recommended; the free tier includes a limited number of searches)
+- Deezer artist/album art needs no API key or account.
 - `Pillow` and `tzdata` are installed automatically from the cog's
   `info.json` requirements.
 
@@ -104,7 +106,7 @@ command propagation.
 
 ## Setup
 
-1. **Bot owner — API key.** Create a Last.fm API account and set the key once:
+1. **Bot owner — Last.fm key.** Create a Last.fm API account and set the key once:
 
    ```
    [p]lastfmset api_key <your-api-key>
@@ -113,13 +115,23 @@ command propagation.
    Alternatively set the `LASTFM_API_KEY` environment variable before starting
    Red. The environment variable is used when no key is stored.
 
-2. **Server admin — output channel:**
+2. **Bot owner — SerpApi key.** Create a free key at https://serpapi.com/ and
+   set it once:
+
+   ```
+   [p]lastfmset serp_api_key <your-serpapi-key>
+   ```
+
+   Alternatively set `SERPAPI_API_KEY` before starting Red. Without this key,
+   the cog skips Google Images and uses Deezer directly.
+
+3. **Server admin — output channel:**
 
    ```
    [p]lastfmset channel #listening
    ```
 
-3. **Server admin — schedule and look:**
+4. **Server admin — schedule and look:**
 
    ```
    [p]lastfmset period monthly
@@ -130,13 +142,13 @@ command propagation.
    [p]lastfmset day 1
    ```
 
-4. **Members — link accounts:**
+5. **Members — link accounts:**
 
    ```
    [p]lastfm register your_lastfm_username
    ```
 
-5. **Server admin — enable and preview:**
+6. **Server admin — enable and preview:**
 
    ```
    [p]lastfmset preview
@@ -180,6 +192,7 @@ configured channel.
 | `[p]lastfmset preview [member]` | Post charts now for one member or for every linked member. Does not change the schedule. |
 | `[p]lastfmset status` | Show the full configuration and last error. |
 | `[p]lastfmset api_key <key>` | Bot owner only. Set the Last.fm API key. |
+| `[p]lastfmset serp_api_key <key>` | Bot owner only. Set the SerpApi key used for Google Images. |
 
 `lastfmset` also works as `lfmset`.
 
@@ -207,8 +220,10 @@ member's list is rendered as its own grid:
 
 - The grid is filled from rank 1 down to N×N, using Last.fm's chart order.
 - **Artists** show the artist name; **albums** show the album name and artist.
-- Artist images are resolved in this order: Last.fm image → Deezer portrait →
-  generated initials tile. Deezer lookups are cached on disk for 30 days.
+- Artist and album art is resolved in this order: Last.fm image → Google Images
+  via SerpApi → Deezer → generated initials tile.
+- Missing-art lookups are cached on disk: 30 days for a hit, 7 days for a miss.
+  A unique artist/album is only searched once per cache period.
 - The embed and image caption identify the member, their Last.fm handle, and
   the server.
 - `plays` in the footer counts all fetched entries for that member, not just
@@ -228,12 +243,17 @@ Per server, the cog stores:
 - registration timestamp
 
 No scrobbling or Last.fm authentication is performed, and the API key is only
-used for public read endpoints. The Last.fm API key is stored globally and is
-never shown in full.
+used for public read endpoints. The Last.fm and SerpApi keys are stored globally
+and are never shown in full.
 
-When an artist has no usable Last.fm image, only the **artist name** is sent to
-Deezer's public search API. No Discord user data, Last.fm username, or API key
-is sent to Deezer. Resolved image URLs are cached under the cog's data folder.
+When an artist or album has no usable Last.fm image, its **name** is sent to
+SerpApi/Google Images, then to Deezer's public search API. No Discord user data,
+Last.fm username, Last.fm API key, or SerpApi key is sent to Deezer. Resolved
+image URLs are cached under the cog's data folder.
+
+SerpApi searches consume your plan's search credits. The disk cache means each
+unique artist/album is normally searched once per 30 days, not on every post.
+If the SerpApi key is missing or invalid, the cog skips straight to Deezer.
 
 Members remove their own link with `[p]lastfm unregister` or Red's
 `[p]mydata` commands. Deleting the cog does not automatically delete stored
@@ -245,12 +265,14 @@ data; use Red's data deletion commands first if needed.
 | --- | --- |
 | `No Last.fm API key is configured` | Bot owner runs `[p]lastfmset api_key <key>` or sets `LASTFM_API_KEY`. |
 | `Last.fm rejected the configured API key` | The key is invalid or suspended; the bot owner must replace it. |
+| `SerpApi returns no images` | Check the SerpApi key with `[p]lastfmset status`; invalid keys are not cached, so a later preview retries. |
+| `SerpApi quota exceeded` | Wait for the quota to reset or upgrade the SerpApi plan; cached images still render. |
 | `Last.fm has no user named ...` | Check the username or profile URL. |
 | `The lastfm user ... is already linked` | Each Last.fm account can only be linked once per server. |
 | Summary skips a run | Verify `[p]lastfmset status`: channel still exists, bot can attach files, and members are linked. |
 | One member's chart is missing | That profile may be private, renamed, or temporarily unavailable. Check `[p]lastfmset status` for the recorded failure. |
-| Images have letter tiles instead of covers | Last.fm returned placeholder art and Deezer had no confident match. This is normal for obscure artists. |
-| Artist portraits are missing | Deezer returned no confident match, or the lookup failed; the cog falls back to a generated tile. |
+| Images have letter tiles instead of covers | Last.fm returned placeholder art, SerpApi had no usable result, and Deezer had no confident match. This is normal for obscure artists. |
+| Artist portraits are missing | SerpApi/Deezer returned no confident match, or the lookup failed; the cog falls back to a generated tile. |
 | Times look wrong | Set the server's timezone with `[p]lastfmset timezone`; the schedule uses local wall-clock time. |
 
 ## Development
@@ -276,7 +298,7 @@ pip install "Red-DiscordBot @ git+https://github.com/Cog-Creators/Red-DiscordBot
 pytest -q
 ```
 
-Current expected result: 84 tests pass with Red installed, or 51 pass and 1
+Current expected result: 101 tests pass with Red installed, or 63 pass and 1
 skipped without it.
 
 ### Manual smoke test
@@ -284,11 +306,12 @@ skipped without it.
 With Red running and the cog loaded:
 
 1. Bot owner: `[p]lastfmset api_key <key>`
-2. Admin: `[p]lastfmset channel #your-test-channel`
-3. Admin: `[p]lastfmset timezone Europe/Berlin`
-4. Member: `[p]lastfm register <lastfm-username>`
-5. Admin: `[p]lastfmset preview @member` to post one chart immediately.
-6. Check `[p]lastfmset status` for the schedule and any recorded error, then
+2. Bot owner: `[p]lastfmset serp_api_key <key>` (optional; Deezer is used without it)
+3. Admin: `[p]lastfmset channel #your-test-channel`
+4. Admin: `[p]lastfmset timezone Europe/Berlin`
+5. Member: `[p]lastfm register <lastfm-username>`
+6. Admin: `[p]lastfmset preview @member` to post one chart immediately.
+7. Check `[p]lastfmset status` for the schedule and any recorded error, then
    run `[p]lastfmset enable` when the preview looks right.
 
 `preview` does not change the schedule, so it is safe to repeat while testing.
@@ -296,6 +319,6 @@ With Red running and the cog loaded:
 ## Credits
 
 - Charts and artwork: [Last.fm](https://www.last.fm/)
-- Artist portraits: [Deezer](https://www.deezer.com/)
+- Artist and album art: [SerpApi Google Images](https://serpapi.com/google-images-api), [Deezer](https://www.deezer.com/)
 - Framework: [Red-DiscordBot](https://github.com/Cog-Creators/Red-DiscordBot)
 - Not affiliated with Last.fm or Discord.

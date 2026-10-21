@@ -14,7 +14,7 @@ from .schedule import PERIODS
 log = logging.getLogger("red.lastfmsummary.lastfm")
 
 API_URL = "https://ws.audioscrobbler.com/2.0/"
-USER_AGENT = "lastfm-summary-cog/1.1 (Red-DiscordBot cog)"
+USER_AGENT = "lastfm-summary-cog/1.2 (Red-DiscordBot cog)"
 PLACEHOLDER_HASH = "2a96cbd8b46e442fc41c2b86b821562f"
 IMAGE_SIZE_ORDER = ("mega", "extralarge", "large", "medium", "small")
 _RETRYABLE_CODES = frozenset({11, 16, 29})

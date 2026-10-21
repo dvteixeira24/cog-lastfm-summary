@@ -4,22 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import difflib
-import json
 import logging
+import re
 import time
 import unicodedata
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Awaitable, Callable, Mapping, Sequence
 
 import aiohttp
+
+from .cache import load_url_cache, save_url_cache
 
 log = logging.getLogger("red.lastfmsummary.deezer")
 
 SEARCH_URL = "https://api.deezer.com/search/artist"
-USER_AGENT = "lastfm-summary-cog/1.1 (artist image lookup)"
+ALBUM_SEARCH_URL = "https://api.deezer.com/search/album"
+USER_AGENT = "lastfm-summary-cog/1.2 (image lookup)"
 CACHE_TTL = 30 * 24 * 60 * 60
 MISS_CACHE_TTL = 7 * 24 * 60 * 60
-MAX_CACHE_ENTRIES = 5000
 MATCH_THRESHOLD = 0.88
 _MAX_ATTEMPTS = 2
 
@@ -33,51 +35,22 @@ def artist_key(name: str) -> str:
     return text or " ".join(str(name).split()).casefold()
 
 
-def _load_cache(path: Path | None) -> dict[str, dict[str, Any]]:
-    if path is None:
-        return {}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(raw, Mapping):
-        return {}
-
-    now = time.time()
-    cache: dict[str, dict[str, Any]] = {}
-    for key, value in raw.items():
-        if not isinstance(value, Mapping):
-            continue
-        expires = value.get("expires")
-        url = value.get("url")
-        if not isinstance(expires, (int, float)) or expires <= now:
-            continue
-        if url is not None and not isinstance(url, str):
-            continue
-        cache[str(key)] = {"url": url, "expires": float(expires)}
-    return cache
+def album_key(artist: str, album: str) -> str:
+    """Normalize an artist/album pair for matching and cache keys."""
+    return f"{artist_key(artist)}::{artist_key(album)}"
 
 
-def _save_cache(path: Path | None, cache: Mapping[str, Mapping[str, Any]]) -> None:
-    if path is None:
-        return
-    now = time.time()
-    entries = {
-        key: {"url": value.get("url"), "expires": float(value.get("expires", 0))}
-        for key, value in cache.items()
-        if float(value.get("expires", 0)) > now
-    }
-    if len(entries) > MAX_CACHE_ENTRIES:
-        newest = sorted(entries.items(), key=lambda item: item[1]["expires"], reverse=True)
-        entries = dict(newest[:MAX_CACHE_ENTRIES])
-
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(f"{path.name}.tmp")
-        temporary.write_text(json.dumps(entries, separators=(",", ":")), encoding="utf-8")
-        temporary.replace(path)
-    except OSError:
-        log.debug("Could not write Deezer cache %s", path, exc_info=True)
+def _album_title_key(title: str) -> str:
+    text = unicodedata.normalize("NFKD", str(title))
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    text = re.sub(r"[\(\[].*?[\)\]]", " ", text)
+    text = re.sub(
+        r"\b(deluxe|remaster(?:ed)?|expanded|anniversary|special|bonus)\b.*$",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return artist_key(text)
 
 
 def _picture_url(row: Mapping[str, Any]) -> str | None:
@@ -148,6 +121,149 @@ async def _search(session: aiohttp.ClientSession, name: str, timeout: float) -> 
     return None
 
 
+async def _search_album(
+    session: aiohttp.ClientSession, album: tuple[str, str], timeout: float
+) -> str | None:
+    artist, title = album
+    query = " ".join(part for part in (artist, title) if part)
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            async with session.get(
+                ALBUM_SEARCH_URL,
+                params={"q": query, "limit": 5},
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as response:
+                if response.status == 429 or response.status >= 500:
+                    if attempt + 1 < _MAX_ATTEMPTS:
+                        await asyncio.sleep(1.0)
+                        continue
+                    return None
+                if response.status != 200:
+                    return None
+                payload = await response.json(content_type=None)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            if attempt + 1 < _MAX_ATTEMPTS:
+                await asyncio.sleep(0.5)
+                continue
+            return None
+
+        if not isinstance(payload, Mapping):
+            return None
+        rows = payload.get("data")
+        if not isinstance(rows, (list, tuple)):
+            return None
+        match = _pick_album_match(artist, title, rows)
+        return _album_cover_url(match) if match is not None else None
+    return None
+
+
+def _album_cover_url(row: Mapping[str, Any]) -> str | None:
+    for field in ("cover_xl", "cover_big", "cover_medium"):
+        url = row.get(field)
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            return url
+    return None
+
+
+def _pick_album_match(artist: str, album: str, rows: Sequence[Any]) -> Mapping[str, Any] | None:
+    album_query = _album_title_key(album)
+    artist_query = artist_key(artist)
+    best: tuple[int, int] | None = None
+    chosen: Mapping[str, Any] | None = None
+
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        title_key = _album_title_key(str(row.get("title") or row.get("name") or ""))
+        if not title_key or not _album_cover_url(row):
+            continue
+        raw_artist = row.get("artist")
+        if isinstance(raw_artist, Mapping):
+            row_artist = str(raw_artist.get("name", ""))
+        else:
+            row_artist = str(raw_artist or "")
+        row_artist_key = artist_key(row_artist)
+
+        album_score = (
+            2
+            if title_key == album_query
+            else 1
+            if difflib.SequenceMatcher(None, album_query, title_key).ratio() >= MATCH_THRESHOLD
+            else 0
+        )
+        if not album_score:
+            continue
+        if artist_query:
+            artist_score = (
+                2
+                if row_artist_key == artist_query
+                else 1
+                if row_artist_key
+                and difflib.SequenceMatcher(None, artist_query, row_artist_key).ratio()
+                >= MATCH_THRESHOLD
+                else 0
+            )
+            if not artist_score:
+                continue
+        else:
+            artist_score = 0
+        try:
+            fans = int(row.get("nb_fan") or row.get("rank") or 0)
+        except (TypeError, ValueError):
+            fans = 0
+        candidate = (album_score * 2 + artist_score, fans)
+        if best is None or candidate > best:
+            best = candidate
+            chosen = row
+    return chosen
+
+
+async def _resolve_cached(
+    unique: Mapping[str, Any],
+    lookup: Callable[[aiohttp.ClientSession, Any, float], Awaitable[str | None]],
+    *,
+    cache_path: Path | None,
+    session: aiohttp.ClientSession | None,
+    timeout: float,
+) -> dict[str, str | None]:
+    if not unique:
+        return {}
+
+    cache = await asyncio.to_thread(load_url_cache, cache_path)
+    results: dict[str, str | None] = {key: cache[key]["url"] for key in unique if key in cache}
+    missing = {key: payload for key, payload in unique.items() if key not in results}
+    if not missing:
+        return results
+
+    owned_session = session is None
+    if session is None:
+        session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=timeout),
+            headers={"User-Agent": USER_AGENT},
+        )
+
+    semaphore = asyncio.Semaphore(4)
+
+    async def one(key: str, payload: Any) -> None:
+        assert session is not None
+        async with semaphore:
+            url = await lookup(session, payload, timeout)
+        results[key] = url
+        cache[key] = {
+            "url": url,
+            "expires": time.time() + (CACHE_TTL if url else MISS_CACHE_TTL),
+        }
+
+    try:
+        await asyncio.gather(*(one(key, payload) for key, payload in missing.items()))
+    finally:
+        if owned_session:
+            await session.close()
+
+    await asyncio.to_thread(save_url_cache, cache_path, cache)
+    return results
+
+
 async def resolve_artist_images(
     names: Sequence[str],
     *,
@@ -166,44 +282,42 @@ async def resolve_artist_images(
         key = artist_key(cleaned)
         if cleaned and key:
             unique.setdefault(key, cleaned)
-
-    if not unique:
-        return {}
-
-    cache = await asyncio.to_thread(_load_cache, cache_path)
-    results: dict[str, str | None] = {key: cache[key]["url"] for key in unique if key in cache}
-    missing = {key: name for key, name in unique.items() if key not in results}
-    if not missing:
-        return results
-
-    owned_session = session is None
-    if session is None:
-        session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=timeout),
-            headers={"User-Agent": USER_AGENT},
-        )
-
-    semaphore = asyncio.Semaphore(4)
-
-    async def one(key: str, name: str) -> None:
-        assert session is not None
-        async with semaphore:
-            url = await _search(session, name, timeout)
-        results[key] = url
-        cache[key] = {
-            "url": url,
-            "expires": time.time() + (CACHE_TTL if url else MISS_CACHE_TTL),
-        }
-
-    try:
-        await asyncio.gather(*(one(key, name) for key, name in missing.items()))
-    finally:
-        if owned_session:
-            await session.close()
-
-    if missing:
-        await asyncio.to_thread(_save_cache, cache_path, cache)
-    return results
+    return await _resolve_cached(
+        unique,
+        lambda sess, name, timeout_: _search(sess, name, timeout_),
+        cache_path=cache_path,
+        session=session,
+        timeout=timeout,
+    )
 
 
-__all__ = ["artist_key", "resolve_artist_images"]
+async def resolve_album_covers(
+    albums: Sequence[tuple[str, str]],
+    *,
+    cache_path: Path | None = None,
+    session: aiohttp.ClientSession | None = None,
+    timeout: float = 10.0,
+) -> dict[str, str | None]:
+    """Resolve ``(artist, album)`` pairs to Deezer cover URLs."""
+    unique: dict[str, tuple[str, str]] = {}
+    for artist, album in albums:
+        clean_artist = " ".join(str(artist or "").split())
+        clean_album = " ".join(str(album or "").split())
+        if not clean_album:
+            continue
+        unique.setdefault(album_key(clean_artist, clean_album), (clean_artist, clean_album))
+    return await _resolve_cached(
+        unique,
+        lambda sess, pair, timeout_: _search_album(sess, pair, timeout_),
+        cache_path=cache_path,
+        session=session,
+        timeout=timeout,
+    )
+
+
+__all__ = [
+    "album_key",
+    "artist_key",
+    "resolve_album_covers",
+    "resolve_artist_images",
+]

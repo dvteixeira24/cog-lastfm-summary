@@ -9,8 +9,9 @@ A Red-DiscordBot cog that lets server members register their Last.fm usernames a
 periodically posts a top-artists (or top-albums) grid image for every linked
 member into a configured channel. Server admins choose the chart period (weekly,
 monthly, quarterly, half-yearly, yearly), posting time and timezone, grid size,
-and data source. Artist portraits that Last.fm no longer serves are resolved
-through Deezer, with a generated tile as the final fallback.
+and data source. Missing artist and album art is resolved through SerpApi Google
+Images, then Deezer as the last provider fallback, with a generated tile as the
+final result.
 
 ## Goals
 
@@ -91,6 +92,7 @@ All commands require `manage_guild` (or Red admin).
 | `lastfmset preview [member]` | Render and post charts now (one member or all linked members) without changing the schedule. |
 | `lastfmset status` | Show full configuration, next run, member count, and last error. |
 | `lastfmset api_key <key>` | Owner only. Store the Last.fm API key globally. |
+| `lastfmset serp_api_key <key>` | Owner only. Store the SerpApi key used for Google Images. |
 
 ## Architecture
 
@@ -100,13 +102,15 @@ lastfmsummary/
   info.json            Red cog metadata + requirements
   cog.py               LastFMSummary cog: Config, commands, scheduler, posting
   lastfm.py            async Last.fm client, typed records, errors
-  deezer.py            best-effort artist portrait lookup + disk cache
+  deezer.py            best-effort artist/album cover lookup + disk cache
+  serp.py              SerpApi Google Images lookup + disk cache
   schedule.py          pure timezone/period math (next run, period labels)
   render.py            pure Pillow grid renderer and image acquisition helpers
 tests/
   test_schedule.py
   test_lastfm.py
   test_deezer.py
+  test_serp.py
   test_render.py
   test_cog.py          skipped when Red is not importable
 ```
@@ -117,8 +121,10 @@ Units and boundaries:
   `datetime` and describes the period window.
 - `lastfm.py` owns HTTP, JSON validation and retries. It returns
   plain dataclasses. It does not know about guilds or config.
-- `deezer.py` owns artist portrait lookup, name normalization, matching and its
-  own on-disk cache. It never receives Discord user data.
+- `deezer.py` owns artist/album cover lookup, name normalization, matching and
+  its own on-disk cache. It never receives Discord user data.
+- `serp.py` owns Google Images lookup through SerpApi, candidate selection and
+  its own cache. It never receives Discord user data.
 - `render.py` owns downloading/caching cover art and drawing. It accepts plain
   `GridEntry` records and returns PNG bytes.
 - `cog.py` glues config, commands, scheduler, and Discord posting. This is the
@@ -128,9 +134,9 @@ Data flow for a scheduled post:
 
 ```
 scheduler tick → due guilds → read config + registrations → Last.fm top
-lists per member (bounded concurrency) → resolve missing artist portraits
-via Deezer (cached) → take each member's top N² → download covers →
-render one PNG per member → post embed+file each → persist run times
+lists per member (bounded concurrency) → resolve missing artist/album art
+via SerpApi, then Deezer (cached) → take each member's top N² → download
+covers → render one PNG per member → post embed+file each → persist run times
 ```
 
 ## Configuration
@@ -138,7 +144,8 @@ render one PNG per member → post embed+file each → persist run times
 Global (bot-wide):
 
 ```python
-api_key: str = ""     # fallback: LASTFM_API_KEY env var
+api_key: str = ""       # fallback: LASTFM_API_KEY env var
+serp_api_key: str = ""  # fallback: SERPAPI_API_KEY env var
 ```
 
 Guild:
@@ -226,26 +233,39 @@ Implementation details:
   `2a96cbd8b46e442fc41c2b86b821562f` hash, or a URL containing
   `lastfm_img/default`). Placeholder entries render a generated tile.
 
-### Artist portraits (Deezer)
+### Missing artwork (SerpApi, then Deezer)
 
-Last.fm stopped serving useful artist photos; its artist image fields are
-usually the white-star placeholder. For artist grids the cog resolves only the
-missing images:
+Last.fm often has no usable artist portrait and occasionally no usable album
+cover. Only the top N² entries with placeholder/missing art are resolved.
 
-1. Search `https://api.deezer.com/search/artist?q=<name>&limit=5`.
-2. Normalize names (case, accents, punctuation, `&` → `and`) and require an
-   exact normalized match or a similarity ratio of at least 0.88. Rejecting
-   weak matches prevents attaching the wrong artist's photo.
-3. Prefer `picture_xl`, then `picture_big`/`picture_medium`.
-4. Cache successful URLs for 30 days and misses for 7 days in
-   `cog_data_path()/deezer-artists.json`.
-5. On any Deezer failure, keep the Last.fm image; if that is a placeholder,
-   render the generated initials tile. Deezer failures never fail a chart run.
+**1. SerpApi Google Images** (when a key is configured):
 
-No Deezer account or API key is required. Requests are limited to four
-concurrent lookups and carry a descriptive User-Agent. Only artist names are
-sent to Deezer. Deezer is used only for `artists` source; album covers still
-come from Last.fm.
+- Artist query: `"<artist> music artist"`.
+- Album query: `"<artist> <album> album cover"`.
+- Request `engine=google_images`, `safe=active`, `imgar=s`, `hl=en`.
+- Prefer originals at least 300×300 with an aspect ratio between 0.6 and 1.7;
+  otherwise use the first original, then the thumbnail.
+- Cache results per artist/album for 30 days (7 days for misses). API,
+  auth and rate-limit errors are **not** cached, so a later preview retries.
+- Each uncached unique artist/album costs one SerpApi search.
+
+**2. Deezer** (last provider fallback):
+
+- Artist: `https://api.deezer.com/search/artist?q=<name>&limit=5`; prefer
+  `picture_xl`, then `picture_big`/`picture_medium`.
+- Album: `https://api.deezer.com/search/album?q=<artist> <album>&limit=5`; prefer
+  `cover_xl`, then `cover_big`/`cover_medium`.
+- Normalize case, accents, punctuation, `&` → `and` and `$` → `s`. Require an
+  exact normalized match or a similarity ratio of at least 0.88; strip common
+  deluxe/remaster suffixes when matching album titles. Weak matches are rejected.
+- Cache under `cog_data_path()/deezer-artists.json` and `deezer-albums.json`.
+
+**3. Generated initials tile** when all providers fail.
+
+Provider failures never fail a chart run: the next provider is tried, then the
+generated tile. Both providers use four concurrent lookups and a descriptive
+User-Agent. No provider receives Discord user data, Last.fm usernames, or API
+keys; only artist/album names are sent.
 
 ## Rendering
 
@@ -259,7 +279,7 @@ come from Last.fm.
   - Header: title (e.g. "Top Artists — Monthly"), subtitle with the member,
     their Last.fm handle, and the server name.
   - Footer: "X plays • <date range> • Data from Last.fm" (or
-    "Data: Last.fm & Deezer" when a fallback portrait was used) and "last.fm".
+    "Data: Last.fm & SerpApi & Deezer" when fallback art was used) and "last.fm".
 - Each tile: rounded rectangle mask, center-crop cover, rank badge, caption bar
   with name (wrapped to at most 2 lines, ellipsized) and, for albums, artist
   name in smaller muted text.
@@ -291,9 +311,11 @@ come from Last.fm.
 - All members failed: skip posting, store a combined error.
 - Partial member failures: post the successful charts; store and report the
   failed member names.
-- Deezer unavailable/rate-limited: log at debug, cache the miss for 7 days, and
-  keep the Last.fm image or generated placeholder. Chart posting continues.
-- Unreadable/corrupt Deezer cache: treat as empty and rewrite it.
+- SerpApi unavailable/rate-limited/invalid key: do not cache the error; skip to
+  Deezer and log at debug. A later run retries SerpApi.
+- Deezer unavailable/rate-limited: cache the miss for 7 days and keep the
+  Last.fm image or generated placeholder. Chart posting continues.
+- Unreadable/corrupt provider caches: treat as empty and rewrite them.
 - Config validation: clamp invalid stored values at read time (grid 2–8,
   unknown period/source/timezone fall back to defaults) so corrupt config cannot
   break the loop.
@@ -307,8 +329,9 @@ come from Last.fm.
   (`requester="user"|"discord_deleted_user"`) to integrate with `[p]mydata`.
 - No Last.fm credentials beyond the shared read-only API key, which is stored
   globally, never echoed, and can be supplied via env var.
-- Only artist names are sent to Deezer for portrait lookup. No Discord IDs,
-  Last.fm usernames, registration data, or API keys are sent.
+- Only artist and album names are sent to SerpApi/Google Images and Deezer for
+  artwork lookup. No Discord IDs, Last.fm usernames, registration data, or API
+  keys are sent. The SerpApi key is stored globally and never echoed.
 
 ## Testing
 
@@ -318,8 +341,10 @@ come from Last.fm.
   selection and placeholder detection, retry policy, error mapping, and
   per-member fetch failure accounting.
 - `test_deezer.py`: name normalization, exact/similar matching, rejection of
-  weak matches, image preference, network failure handling, and hit/miss cache
-  behavior using a fake session.
+  weak matches, artist and album image preference, network failure handling,
+  and hit/miss cache behavior using a fake session.
+- `test_serp.py`: query construction, image scoring, thumbnail fallback,
+  SerpApi parameters, non-caching of API errors, and hit/miss cache behavior.
 - `test_render.py`: generated art for 2×2 and 3×3, exact canvas dimensions,
   deterministic placeholders, long names, missing covers, streamed image
   bodies, PNG signature.
@@ -331,8 +356,9 @@ come from Last.fm.
 
 - Repo root `info.json` + `lastfmsummary/info.json` follow Red's downloader
   format; requirements: `Pillow>=10`, `tzdata`.
-- Setup: `[p]load lastfmsummary`, owner sets `[p]lastfmset api_key`, admin sets
-  channel/period/etc., members register, then `[p]lastfmset enable`.
+- Setup: `[p]load lastfmsummary`, owner sets `[p]lastfmset api_key` and
+  optionally `[p]lastfmset serp_api_key`, admin sets channel/period/etc.,
+  members register, then `[p]lastfmset enable`.
 - Minimum bot version: Red 3.5.0; Python 3.9+ (uses `zoneinfo`, dataclasses,
   `asyncio.to_thread`).
 

@@ -3,7 +3,12 @@ import json
 import aiohttp
 import pytest
 
-from lastfmsummary.deezer import artist_key, resolve_artist_images
+from lastfmsummary.deezer import (
+    album_key,
+    artist_key,
+    resolve_album_covers,
+    resolve_artist_images,
+)
 
 
 class FakeResponse:
@@ -164,3 +169,54 @@ async def test_resolve_skips_blank_names(tmp_path):
     )
     assert result == {}
     assert session.requests == []
+
+
+def test_album_key_includes_artist_and_album():
+    assert album_key("Radiohead", "Kid A") == "radiohead::kida"
+    assert album_key("radiohead", "kid a") == "radiohead::kida"
+    assert album_key("", "Kid A") == "::kida"
+
+
+def album_payload(artist, title, cover="https://cdn/cover.jpg"):
+    return {
+        "data": [
+            {
+                "title": title,
+                "artist": {"name": artist},
+                "cover_xl": cover,
+                "cover_big": "https://cdn/cover-500.jpg",
+            }
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_resolve_album_cover_exact_match(tmp_path):
+    session = FakeSession({"Radiohead Kid A": FakeResponse(album_payload("Radiohead", "Kid A"))})
+    result = await resolve_album_covers(
+        [("Radiohead", "Kid A")], cache_path=tmp_path / "deezer-albums.json", session=session
+    )
+    assert result == {"radiohead::kida": "https://cdn/cover.jpg"}
+    assert session.requests == [{"q": "Radiohead Kid A", "limit": 5}]
+
+
+@pytest.mark.asyncio
+async def test_resolve_album_rejects_wrong_artist(tmp_path):
+    session = FakeSession(
+        {"Radiohead Kid A": FakeResponse(album_payload("Some Cover Band", "Kid A"))}
+    )
+    result = await resolve_album_covers(
+        [("Radiohead", "Kid A")], cache_path=tmp_path / "deezer-albums.json", session=session
+    )
+    assert result == {"radiohead::kida": None}
+
+
+@pytest.mark.asyncio
+async def test_resolve_album_accepts_deluxe_suffix(tmp_path):
+    session = FakeSession(
+        {"Radiohead Kid A": FakeResponse(album_payload("Radiohead", "Kid A (Deluxe Edition)"))}
+    )
+    result = await resolve_album_covers(
+        [("Radiohead", "Kid A")], cache_path=tmp_path / "deezer-albums.json", session=session
+    )
+    assert result["radiohead::kida"] == "https://cdn/cover.jpg"

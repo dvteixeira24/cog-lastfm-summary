@@ -10,7 +10,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 from urllib.parse import quote
 
 import discord
@@ -18,7 +18,12 @@ from discord.ext import tasks
 from redbot.core import Config, commands, data_manager
 from redbot.core.bot import Red
 
-from .deezer import artist_key, resolve_artist_images
+from .deezer import (
+    album_key,
+    artist_key,
+    resolve_album_covers,
+    resolve_artist_images,
+)
 from .lastfm import (
     LastFMClient,
     LastFMError,
@@ -36,6 +41,7 @@ from .schedule import (
     period_window,
     validate_timezone,
 )
+from .serp import album_query, artist_query, resolve_serp_images
 
 log = logging.getLogger("red.lastfmsummary")
 
@@ -121,12 +127,12 @@ class LastFMSummary(commands.Cog):
     """Periodic Last.fm top artists or albums charts for every linked member."""
 
     __author__ = "OpenCode"
-    __version__ = "1.1.0"
+    __version__ = "1.2.0"
 
     def __init__(self, bot: Red) -> None:
         self.bot = bot
         self.config = Config.get_conf(self, identifier=728394615, force_registration=True)
-        self.config.register_global(api_key="")
+        self.config.register_global(api_key="", serp_api_key="")
         self.config.register_guild(
             channel_id=None,
             enabled=False,
@@ -203,6 +209,10 @@ class LastFMSummary(commands.Cog):
     async def _api_key(self) -> str:
         stored = str(await self.config.api_key() or "").strip()
         return stored or os.environ.get("LASTFM_API_KEY", "").strip()
+
+    async def _serp_api_key(self) -> str:
+        stored = str(await self.config.serp_api_key() or "").strip()
+        return stored or os.environ.get("SERPAPI_API_KEY", "").strip()
 
     async def _store_next_run(
         self,
@@ -440,7 +450,9 @@ class LastFMSummary(commands.Cog):
                 "`lastfmset day monday|1-31`\n"
                 "`lastfmset enable|disable`\n"
                 "`lastfmset preview [member]`\n"
-                "`lastfmset status`"
+                "`lastfmset status`\n"
+                "`lastfmset api_key`\n"
+                "`lastfmset serp_api_key`"
             ),
         )
         await self._respond(ctx, embed=embed)
@@ -471,6 +483,8 @@ class LastFMSummary(commands.Cog):
         embed.add_field(name="Linked members", value=str(len(registrations)))
         key = await self._api_key()
         embed.add_field(name="API key", value="configured" if key else "missing")
+        serp_key = await self._serp_api_key()
+        embed.add_field(name="SerpApi key", value="configured" if serp_key else "missing")
         if admin:
             if settings["last_run_at"]:
                 embed.add_field(
@@ -749,6 +763,22 @@ class LastFMSummary(commands.Cog):
             "Try `lastfmset preview` to test it.",
         )
 
+    @lastfmset.command(name="serp_api_key")
+    @commands.is_owner()
+    async def lastfmset_serp_api_key(self, ctx: commands.Context, key: str) -> None:
+        """Set the bot-wide SerpApi key used for Google Images (bot owner only)."""
+        candidate = key.strip()
+        if len(candidate) < 8:
+            await self._respond(ctx, "That does not look like a SerpApi key.")
+            return
+        await self.config.serp_api_key.set(candidate)
+        await self._respond(
+            ctx,
+            f"SerpApi key saved (…{candidate[-4:]}). "
+            "Artist and album art will be tried via SerpApi before Deezer. "
+            "Try `lastfmset preview @member` to test it.",
+        )
+
     # ---------------------------------------------------------------- posting
 
     @staticmethod
@@ -765,6 +795,60 @@ class LastFMSummary(commands.Cog):
                     return str(name)
         return fallback
 
+    async def _resolve_fallbacks(
+        self, charts: Sequence[MemberChart], source: str, grid_size: int
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Resolve SERP then Deezer images for entries missing Last.fm art."""
+        missing: dict[str, tuple[str, str, str]] = {}
+        for chart in charts:
+            for entry in chart.entries[: grid_size * grid_size]:
+                if not is_placeholder(entry.image_url):
+                    continue
+                if source == "albums":
+                    artist = entry.artist or ""
+                    key = album_key(artist, entry.name)
+                    query = album_query(artist, entry.name)
+                    missing.setdefault(key, (entry.name, artist, query))
+                else:
+                    key = artist_key(entry.name)
+                    missing.setdefault(key, (entry.name, "", artist_query(entry.name)))
+
+        if not missing:
+            return {}, {}
+
+        serp_key = await self._serp_api_key()
+        serp_images: dict[str, str] = {}
+        if serp_key:
+            try:
+                resolved = await resolve_serp_images(
+                    {key: value[2] for key, value in missing.items()},
+                    api_key=serp_key,
+                    cache_path=self._cache_dir / "serp-images.json",
+                )
+                serp_images = {key: url for key, url in resolved.items() if url}
+            except Exception:
+                log.exception("SerpApi image lookup failed")
+
+        remaining = {key: value for key, value in missing.items() if key not in serp_images}
+        deezer_images: dict[str, str] = {}
+        if remaining:
+            try:
+                if source == "albums":
+                    resolved = await resolve_album_covers(
+                        [(value[1], value[0]) for value in remaining.values()],
+                        cache_path=self._cache_dir / "deezer-albums.json",
+                    )
+                else:
+                    resolved = await resolve_artist_images(
+                        [value[0] for value in remaining.values()],
+                        cache_path=self._cache_dir / "deezer-artists.json",
+                    )
+                deezer_images = {key: url for key, url in resolved.items() if url}
+            except Exception:
+                log.exception("Deezer image lookup failed")
+
+        return serp_images, deezer_images
+
     async def _post_chart(
         self,
         guild: discord.Guild,
@@ -775,7 +859,8 @@ class LastFMSummary(commands.Cog):
         grid_size: int,
         source: str,
         period: str,
-        artist_images: Mapping[str, str | None] | None = None,
+        serp_images: Mapping[str, str | None] | None = None,
+        deezer_images: Mapping[str, str | None] | None = None,
     ) -> discord.Message:
         """Render and post a single member's chart."""
         entries = chart.entries[: grid_size * grid_size]
@@ -783,14 +868,23 @@ class LastFMSummary(commands.Cog):
             raise SummaryError(f"{display_name} has no listening data for this period.")
 
         tiles: list[Tile] = []
-        used_deezer = False
+        providers: set[str] = set()
         for rank, entry in enumerate(entries, start=1):
             image_url = entry.image_url
-            if source == "artists" and artist_images and is_placeholder(image_url):
-                fallback = artist_images.get(artist_key(entry.name))
+            if is_placeholder(image_url):
+                if source == "albums":
+                    fallback_key = album_key(entry.artist or "", entry.name)
+                else:
+                    fallback_key = artist_key(entry.name)
+                fallback = (serp_images or {}).get(fallback_key)
                 if fallback:
                     image_url = fallback
-                    used_deezer = True
+                    providers.add("SerpApi")
+                else:
+                    fallback = (deezer_images or {}).get(fallback_key)
+                    if fallback:
+                        image_url = fallback
+                        providers.add("Deezer")
             tiles.append(
                 Tile(
                     name=entry.name,
@@ -808,7 +902,10 @@ class LastFMSummary(commands.Cog):
         title = f"{_format_source(source)} — {PERIOD_LABELS[period]}"
         subtitle_parts = [display_name, f"@{chart.username}", guild.name]
         subtitle = " • ".join(part for part in subtitle_parts if part)
-        credit = "Data: Last.fm & Deezer" if used_deezer else "Data from Last.fm"
+        provider_list = [name for name in ("SerpApi", "Deezer") if name in providers]
+        credit = (
+            "Data: Last.fm & " + " & ".join(provider_list) if provider_list else "Data from Last.fm"
+        )
         footer = f"{total_plays:,} plays • {period_window(period)} • {credit}"
         image_bytes = await asyncio.to_thread(
             render_grid,
@@ -833,8 +930,8 @@ class LastFMSummary(commands.Cog):
         )
         embed.set_image(url=f"attachment://{filename}")
         embed_footer = f"{total_plays:,} plays • {period_window(period)}"
-        if used_deezer:
-            embed_footer += " • Artist images via Deezer"
+        if provider_list:
+            embed_footer += " • Images via " + ", ".join(provider_list)
         embed.set_footer(text=embed_footer)
         return await channel.send(
             embed=embed,
@@ -881,22 +978,7 @@ class LastFMSummary(commands.Cog):
             details = f" ({len(failed)} member(s) failed)" if failed else ""
             raise SummaryError(f"Could not fetch any Last.fm charts right now{details}.")
 
-        artist_images: dict[str, str | None] = {}
-        if source == "artists":
-            missing_images = {
-                entry.name
-                for chart in charts
-                for entry in chart.entries[: grid_size * grid_size]
-                if is_placeholder(entry.image_url)
-            }
-            if missing_images:
-                try:
-                    artist_images = await resolve_artist_images(
-                        sorted(missing_images),
-                        cache_path=self._cache_dir / "deezer-artists.json",
-                    )
-                except Exception:
-                    log.exception("Deezer artist image lookup failed")
+        serp_images, deezer_images = await self._resolve_fallbacks(charts, source, grid_size)
 
         posted = 0
         errors: list[str] = []
@@ -914,7 +996,8 @@ class LastFMSummary(commands.Cog):
                     grid_size=grid_size,
                     source=source,
                     period=period,
-                    artist_images=artist_images,
+                    serp_images=serp_images,
+                    deezer_images=deezer_images,
                 )
             except discord.Forbidden:
                 raise

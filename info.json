@@ -5,7 +5,7 @@
     "name": "cog-lastfm-summary",
     "short": "Last.fm listening summaries for Red-DiscordBot",
     "description": "A Red-DiscordBot cog that links Last.fm accounts and posts a periodic top artists or albums grid image for every linked member.",
-    "install_msg": "Thanks for installing Last.fm Summary! Set a Last.fm API key with `[p]lastfmset api_key` as the bot owner, configure a channel and period, then have members run `[p]lastfm register <username>`.",
+    "install_msg": "Thanks for installing Last.fm Summary! Set a Last.fm API key with `[p]lastfmset api_key` and optionally a SerpApi key with `[p]lastfmset serp_api_key` as the bot owner, configure a channel and period, then have members run `[p]lastfm register <username>`.",
     "tags": [
         "lastfm",
         "music",

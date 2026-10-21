@@ -48,11 +48,12 @@ def cog():
 
 
 @pytest.fixture(autouse=True)
-def no_deezer_network(monkeypatch):
+def no_image_network(monkeypatch):
     async def fake_resolver(*args, **kwargs):
         return {}
 
-    monkeypatch.setattr("lastfmsummary.cog.resolve_artist_images", fake_resolver)
+    for name in ("resolve_artist_images", "resolve_album_covers", "resolve_serp_images"):
+        monkeypatch.setattr(f"lastfmsummary.cog.{name}", fake_resolver)
 
 
 def test_groups_and_member_commands_exist(cog):
@@ -84,15 +85,19 @@ def test_admin_commands_exist_and_are_protected(cog):
         "preview",
         "status",
         "api_key",
+        "serp_api_key",
     }
-    admin_commands = [command for command in group.commands if command.name != "api_key"]
+    admin_commands = [
+        command for command in group.commands if command.name not in {"api_key", "serp_api_key"}
+    ]
     for command in admin_commands:
         assert command.checks, f"{command.name} has no checks"
         names = " ".join(getattr(check, "__qualname__", "") for check in command.checks)
         assert "guild_only" in names
         assert command.requires.privilege_level.name == "ADMIN"
-    api_key = next(command for command in group.commands if command.name == "api_key")
-    assert api_key.requires.privilege_level.name == "BOT_OWNER"
+    for name in ("api_key", "serp_api_key"):
+        command = next(command for command in group.commands if command.name == name)
+        assert command.requires.privilege_level.name == "BOT_OWNER"
 
 
 def test_member_commands_are_guild_only(cog):
@@ -340,7 +345,7 @@ async def test_post_charts_uses_deezer_for_missing_artist_images(cog, monkeypatc
     assert calls == [{"Radiohead"}]
     assert captured["tiles"][0].image_url == "https://deezer/rh.jpg"
     assert "Deezer" in captured["footer"]
-    assert "Artist images via Deezer" in channel.sent[0]["embed"].footer.text
+    assert "Images via Deezer" in channel.sent[0]["embed"].footer.text
 
 
 @pytest.mark.asyncio
@@ -380,7 +385,112 @@ async def test_post_charts_ignores_deezer_failures(cog, monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_post_charts_does_not_use_deezer_for_albums(cog, monkeypatch, tmp_path):
+async def test_post_charts_prefers_serp_over_deezer(cog, monkeypatch, tmp_path):
+    charts = [MemberChart("alice", (Entry("Radiohead", None, 10, None),))]
+
+    class FakeClient:
+        def __init__(self, key):
+            pass
+
+        async def fetch_charts(self, usernames, **kwargs):
+            return charts
+
+        async def close(self):
+            return None
+
+    async def fake_key():
+        return "key"
+
+    async def fake_serp_key():
+        return "serp-key"
+
+    queries = {}
+
+    async def fake_serp(queries_, **kwargs):
+        queries.update(queries_)
+        return {"radiohead": "https://serp/rh.jpg"}
+
+    async def fake_covers(urls, **kwargs):
+        return {url: None for url in urls if url}
+
+    captured = {}
+
+    def fake_render(**kwargs):
+        captured.update(kwargs)
+        return PNG
+
+    monkeypatch.setattr("lastfmsummary.cog.LastFMClient", FakeClient)
+    monkeypatch.setattr(cog, "_api_key", fake_key)
+    monkeypatch.setattr(cog, "_serp_api_key", fake_serp_key)
+    monkeypatch.setattr("lastfmsummary.cog.resolve_serp_images", fake_serp)
+    monkeypatch.setattr("lastfmsummary.cog.resolve_artist_images", pytest.fail)
+    monkeypatch.setattr(LastFMSummary, "_cache_dir", property(lambda self: tmp_path))
+    monkeypatch.setattr("lastfmsummary.cog.download_covers", fake_covers)
+    monkeypatch.setattr("lastfmsummary.cog.render_grid", fake_render)
+
+    channel = FakeChannel()
+    report = await cog._post_charts(fake_guild(channel), channel, settings())
+
+    assert report.posted == 1
+    assert queries == {"radiohead": "Radiohead music artist"}
+    assert captured["tiles"][0].image_url == "https://serp/rh.jpg"
+    assert "SerpApi" in captured["footer"]
+    assert "Deezer" not in captured["footer"]
+
+
+@pytest.mark.asyncio
+async def test_post_charts_falls_back_to_deezer_when_serp_misses(cog, monkeypatch, tmp_path):
+    charts = [MemberChart("alice", (Entry("Radiohead", None, 10, None),))]
+
+    class FakeClient:
+        def __init__(self, key):
+            pass
+
+        async def fetch_charts(self, usernames, **kwargs):
+            return charts
+
+        async def close(self):
+            return None
+
+    async def fake_key():
+        return "key"
+
+    async def fake_serp_key():
+        return "serp-key"
+
+    async def fake_serp(queries, **kwargs):
+        return {"radiohead": None}
+
+    async def fake_deezer(names, **kwargs):
+        return {"radiohead": "https://deezer/rh.jpg"}
+
+    async def fake_covers(urls, **kwargs):
+        return {url: None for url in urls if url}
+
+    captured = {}
+
+    def fake_render(**kwargs):
+        captured.update(kwargs)
+        return PNG
+
+    monkeypatch.setattr("lastfmsummary.cog.LastFMClient", FakeClient)
+    monkeypatch.setattr(cog, "_api_key", fake_key)
+    monkeypatch.setattr(cog, "_serp_api_key", fake_serp_key)
+    monkeypatch.setattr("lastfmsummary.cog.resolve_serp_images", fake_serp)
+    monkeypatch.setattr("lastfmsummary.cog.resolve_artist_images", fake_deezer)
+    monkeypatch.setattr(LastFMSummary, "_cache_dir", property(lambda self: tmp_path))
+    monkeypatch.setattr("lastfmsummary.cog.download_covers", fake_covers)
+    monkeypatch.setattr("lastfmsummary.cog.render_grid", fake_render)
+
+    channel = FakeChannel()
+    await cog._post_charts(fake_guild(channel), channel, settings())
+
+    assert captured["tiles"][0].image_url == "https://deezer/rh.jpg"
+    assert "Deezer" in captured["footer"]
+
+
+@pytest.mark.asyncio
+async def test_post_charts_uses_serp_for_album_art(cog, monkeypatch, tmp_path):
     charts = [MemberChart("alice", (Entry("Kid A", "Radiohead", 7, None),))]
 
     class FakeClient:
@@ -396,12 +506,70 @@ async def test_post_charts_does_not_use_deezer_for_albums(cog, monkeypatch, tmp_
     async def fake_key():
         return "key"
 
+    async def fake_serp_key():
+        return "serp-key"
+
+    queries = {}
+
+    async def fake_serp(queries_, **kwargs):
+        queries.update(queries_)
+        return {"radiohead::kida": "https://serp/kida.jpg"}
+
+    async def fake_covers(urls, **kwargs):
+        return {url: None for url in urls if url}
+
+    captured = {}
+
+    def fake_render(**kwargs):
+        captured.update(kwargs)
+        return PNG
+
+    monkeypatch.setattr("lastfmsummary.cog.LastFMClient", FakeClient)
+    monkeypatch.setattr(cog, "_api_key", fake_key)
+    monkeypatch.setattr(cog, "_serp_api_key", fake_serp_key)
+    monkeypatch.setattr("lastfmsummary.cog.resolve_serp_images", fake_serp)
+    monkeypatch.setattr("lastfmsummary.cog.resolve_album_covers", pytest.fail)
+    monkeypatch.setattr(LastFMSummary, "_cache_dir", property(lambda self: tmp_path))
+    monkeypatch.setattr("lastfmsummary.cog.download_covers", fake_covers)
+    monkeypatch.setattr("lastfmsummary.cog.render_grid", fake_render)
+
+    channel = FakeChannel()
+    await cog._post_charts(fake_guild(channel), channel, settings(source="albums"))
+
+    assert queries == {"radiohead::kida": "Radiohead Kid A album cover"}
+    assert captured["tiles"][0].name == "Kid A"
+    assert captured["tiles"][0].subtitle == "Radiohead"
+    assert captured["tiles"][0].image_url == "https://serp/kida.jpg"
+    assert "SerpApi" in captured["footer"]
+
+
+@pytest.mark.asyncio
+async def test_post_charts_uses_deezer_album_cover_as_last_fallback(cog, monkeypatch, tmp_path):
+    charts = [MemberChart("alice", (Entry("Kid A", "Radiohead", 7, None),))]
+
+    class FakeClient:
+        def __init__(self, key):
+            pass
+
+        async def fetch_charts(self, usernames, **kwargs):
+            return charts
+
+        async def close(self):
+            return None
+
+    async def fake_key():
+        return "key"
+
+    async def fake_album_covers(pairs, **kwargs):
+        assert pairs == [("Radiohead", "Kid A")]
+        return {"radiohead::kida": "https://deezer/kida.jpg"}
+
     async def fake_covers(urls, **kwargs):
         return {}
 
     monkeypatch.setattr("lastfmsummary.cog.LastFMClient", FakeClient)
     monkeypatch.setattr(cog, "_api_key", fake_key)
-    monkeypatch.setattr("lastfmsummary.cog.resolve_artist_images", pytest.fail)
+    monkeypatch.setattr("lastfmsummary.cog.resolve_album_covers", fake_album_covers)
     monkeypatch.setattr(LastFMSummary, "_cache_dir", property(lambda self: tmp_path))
     monkeypatch.setattr("lastfmsummary.cog.download_covers", fake_covers)
     monkeypatch.setattr("lastfmsummary.cog.render_grid", lambda **kwargs: PNG)
@@ -618,6 +786,12 @@ async def test_config_defaults(cog):
     }
 
 
+@pytest.mark.asyncio
+async def test_global_config_defaults(cog):
+    assert await cog.config.api_key() == ""
+    assert await cog.config.serp_api_key() == ""
+
+
 class FakeCtx:
     def __init__(self, guild, author):
         self.guild = guild
@@ -732,6 +906,14 @@ async def test_preview_can_target_one_member(cog, monkeypatch):
 
     assert set(captured) == {"200"}
     assert "Posted 1 chart." in ctx.sent[-1][0]
+
+
+@pytest.mark.asyncio
+async def test_serp_api_key_command_saves_key(cog):
+    ctx = FakeCtx(SimpleNamespace(id=9006), SimpleNamespace(id=100, display_name="Alice"))
+    await cog.lastfmset_serp_api_key.callback(cog, ctx, "serpapi-key-1234")
+    assert await cog.config.serp_api_key() == "serpapi-key-1234"
+    assert "SerpApi key saved" in ctx.sent[-1][0]
 
 
 @pytest.mark.asyncio

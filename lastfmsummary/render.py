@@ -462,7 +462,7 @@ async def download_covers(
     if pending and session is None:
         session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=10),
-            headers={"User-Agent": "lastfm-summary-cog/1.1 (cover fetch)"},
+            headers={"User-Agent": "lastfm-summary-cog/1.2 (cover fetch)"},
         )
         owned_session = True
 
